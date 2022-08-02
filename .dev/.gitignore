@@ -1,0 +1,6 @@
+Makefile
+kubeconfig-dev
+*_debug
+*.csr
+*.crt
+*.key
