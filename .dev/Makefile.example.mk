@@ -1,4 +1,4 @@
-HOST_IP=192.168.0.123
+HOST_IP=192.168.0.39
 DATA_DIR=./.
 CLUSTER_NAME=dev-cluster
 CLUSTER_USER=cluster-admin
@@ -90,7 +90,11 @@ debug-controller-manager:
 	go build -o controller_manager_debug -gcflags "all=-N -l" k8s.io/kubernetes/cmd/kube-controller-manager
 	${DELVE_BIN} --listen=127.0.0.1:${CONTROLLER_MANAGER_DEBUG_PORT} --headless=true --api-version=2 --check-go-version=false --only-same-user=false exec \
 		./controller_manager_debug -- \
-			--kubeconfig ${KUBECONFIG_PATH}
+			--kubeconfig ${KUBECONFIG_PATH} \
+			--tls-private-key-file ${CERT_KEY_PATH} \
+			--tls-cert-file ${CERT_PATH} \
+			--cluster-signing-cert-file ${CA_CERT_PATH} \
+			--cluster-signing-key-file ${CA_KEY_PATH}
 
 debug-scheduler:
 	go build -o scheduler_debug -gcflags "all=-N -l" k8s.io/kubernetes/cmd/kube-scheduler
@@ -98,17 +102,29 @@ debug-scheduler:
 		./scheduler_debug -- \
 			--authentication-kubeconfig ${KUBECONFIG_PATH} \
 			--kubeconfig ${KUBECONFIG_PATH} \
-			--cert-dir ${DATA_DIR} \
+			--tls-private-key-file ${CERT_KEY_PATH} \
+			--tls-cert-file ${CERT_PATH} \
 			--client-ca-file ${CA_CERT_PATH} \
 			--requestheader-client-ca-file ${CA_CERT_PATH}
+
+CNI_PLUGIN_ARCHIVE=cni-plugins-linux-amd64-v1.1.1.tgz
+setup-containerd:
+	wget https://github.com/containernetworking/plugins/releases/download/v1.1.1/${CNI_PLUGIN_ARCHIVE}
+	sudo -S mkdir -p /opt/cni/bin
+	sudo tar Cxzvf /opt/cni/bin cni-plugins-linux-amd64-v1.1.1.tgz
+	rm ${CNI_PLUGIN_ARCHIVE}
+	sudo cp 100-crio-bridge.conf 200-loopback.conf /etc/cni/net.d
+	sudo -S bash -c "containerd config default > /etc/containerd/config.toml"
+	sudo systemctl restart containerd
 
 debug-kubelet:
 	go build -o kubelet_debug -gcflags "all=-N -l" k8s.io/kubernetes/cmd/kubelet
 	${DELVE_BIN} --listen=127.0.0.1:${KUBELET_DEBUG_PORT} --headless=true --api-version=2 --check-go-version=false --only-same-user=false exec \
 		./kubelet_debug -- \
-			--root-dir ${DATA_DIR} \
-			--cert-dir ${DATA_DIR} \
 			--kubeconfig ${KUBECONFIG_PATH} \
 			--node-ip ${HOST_IP} \
-			--config=./kubeletconfig.yaml \
-			--container-runtime-endpoint unix://var/run/docker.sock
+			--container-runtime-endpoint unix:///run/containerd/containerd.sock \
+			--config=./kubeletconfig.yaml
+
+running-containers-loop:
+	sudo -S bash -c "while sleep 1; do date; ctr --namespace k8s.io containers list; done;"
