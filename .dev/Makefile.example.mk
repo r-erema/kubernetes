@@ -69,11 +69,14 @@ GOROOT=/usr/local/go
 GOPATH=/Users/roman.erema/go
 API_SERVER_DEBUG_PORT=62001
 CONTROLLER_MANAGER_DEBUG_PORT=62002
+KUBELET_DEBUG_PORT=62003
+SCHEDULER_DEBUG_PORT=62004
+DELVE_BIN=/home/erema/Soft/goland-2022.2.2/GoLand-2022.2.2/plugins/go/lib/dlv/linux/dlv
 
 debug-api-server:
 	go build -o apiserver_debug -gcflags "all=-N -l" k8s.io/kubernetes/cmd/kube-apiserver
-	dlv --listen=127.0.0.1:${API_SERVER_DEBUG_PORT} --headless=true --api-version=2 --check-go-version=false --only-same-user=false exec \
-		apiserver_debug -- \
+	${DELVE_BIN} --listen=127.0.0.1:${API_SERVER_DEBUG_PORT} --headless=true --api-version=2 --check-go-version=false --only-same-user=false exec \
+		./apiserver_debug -- \
 			--etcd-servers http://${HOST_IP}:2379 \
 			--cert-dir ${DATA_DIR} \
 			--tls-private-key-file ${CERT_KEY_PATH} \
@@ -85,6 +88,27 @@ debug-api-server:
 
 debug-controller-manager:
 	go build -o controller_manager_debug -gcflags "all=-N -l" k8s.io/kubernetes/cmd/kube-controller-manager
-	dlv --listen=127.0.0.1:${CONTROLLER_MANAGER_DEBUG_PORT} --headless=true --api-version=2 --check-go-version=false --only-same-user=false exec \
-		controller_manager_debug -- \
+	${DELVE_BIN} --listen=127.0.0.1:${CONTROLLER_MANAGER_DEBUG_PORT} --headless=true --api-version=2 --check-go-version=false --only-same-user=false exec \
+		./controller_manager_debug -- \
 			--kubeconfig ${KUBECONFIG_PATH}
+
+debug-scheduler:
+	go build -o scheduler_debug -gcflags "all=-N -l" k8s.io/kubernetes/cmd/kube-scheduler
+	${DELVE_BIN} --listen=127.0.0.1:${SCHEDULER_DEBUG_PORT} --headless=true --api-version=2 --check-go-version=false --only-same-user=false exec \
+		./scheduler_debug -- \
+			--authentication-kubeconfig ${KUBECONFIG_PATH} \
+			--kubeconfig ${KUBECONFIG_PATH} \
+			--cert-dir ${DATA_DIR} \
+			--client-ca-file ${CA_CERT_PATH} \
+			--requestheader-client-ca-file ${CA_CERT_PATH}
+
+debug-kubelet:
+	go build -o kubelet_debug -gcflags "all=-N -l" k8s.io/kubernetes/cmd/kubelet
+	${DELVE_BIN} --listen=127.0.0.1:${KUBELET_DEBUG_PORT} --headless=true --api-version=2 --check-go-version=false --only-same-user=false exec \
+		./kubelet_debug -- \
+			--root-dir ${DATA_DIR} \
+			--cert-dir ${DATA_DIR} \
+			--kubeconfig ${KUBECONFIG_PATH} \
+			--node-ip ${HOST_IP} \
+			--config=./kubeletconfig.yaml \
+			--container-runtime-endpoint unix://var/run/docker.sock

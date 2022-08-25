@@ -1,5 +1,6 @@
 Makefile
 kubeconfig-dev
+kubeletconfig.yaml
 *_debug
 *.csr
 *.crt
