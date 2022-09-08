@@ -32,8 +32,9 @@ import (
 	e2eskipper "k8s.io/kubernetes/test/e2e/framework/skipper"
 	testutils "k8s.io/kubernetes/test/utils"
 	imageutils "k8s.io/kubernetes/test/utils/image"
+	admissionapi "k8s.io/pod-security-admission/api"
 
-	"github.com/onsi/ginkgo"
+	"github.com/onsi/ginkgo/v2"
 	"github.com/onsi/gomega"
 )
 
@@ -81,6 +82,7 @@ var _ = SIGDescribe("Restart [Serial] [Slow] [Disruptive]", func() {
 	)
 
 	f := framework.NewDefaultFramework("restart-test")
+	f.NamespacePodSecurityEnforceLevel = admissionapi.LevelPrivileged
 	ginkgo.Context("Container Runtime", func() {
 		ginkgo.Context("Network", func() {
 			ginkgo.It("should recover from ip leak", func() {
@@ -135,6 +137,60 @@ var _ = SIGDescribe("Restart [Serial] [Slow] [Disruptive]", func() {
 				}
 				ginkgo.By(fmt.Sprintf("Container runtime restart test passed with %d pods", len(postRestartRunningPods)))
 			})
+		})
+	})
+
+	ginkgo.Context("Dbus", func() {
+		ginkgo.It("should continue to run pods after a restart", func() {
+			// Allow dbus to be restarted on ubuntu
+			err := overlayDbusConfig()
+			framework.ExpectNoError(err)
+			defer func() {
+				err := restoreDbusConfig()
+				framework.ExpectNoError(err)
+			}()
+
+			preRestartPodCount := 2
+			ginkgo.By(fmt.Sprintf("creating %d RestartAlways pods on node", preRestartPodCount))
+			restartAlwaysPods := newTestPods(preRestartPodCount, false, imageutils.GetPauseImageName(), "restart-dbus-test")
+			createBatchPodWithRateControl(f, restartAlwaysPods, podCreationInterval)
+			defer deletePodsSync(f, restartAlwaysPods)
+
+			allPods := waitForPods(f, preRestartPodCount, startTimeout)
+			if len(allPods) < preRestartPodCount {
+				framework.Failf("Failed to run sufficient restartAlways pods, got %d but expected %d", len(allPods), preRestartPodCount)
+			}
+
+			ginkgo.By("restarting dbus and systemd", func() {
+				stdout, err := exec.Command("sudo", "systemctl", "reset-failed", "dbus").CombinedOutput()
+				framework.ExpectNoError(err, "Failed to reset dbus start-limit with systemctl: %v, %s", err, string(stdout))
+
+				stdout, err = exec.Command("sudo", "systemctl", "restart", "dbus").CombinedOutput()
+				framework.ExpectNoError(err, "Failed to restart dbus with systemctl: %v, %s", err, string(stdout))
+
+				stdout, err = exec.Command("sudo", "systemctl", "daemon-reexec").CombinedOutput()
+				framework.ExpectNoError(err, "Failed to restart systemd with systemctl: %v, %s", err, string(stdout))
+			})
+
+			ginkgo.By("verifying restartAlways pods stay running", func() {
+				for start := time.Now(); time.Since(start) < startTimeout; time.Sleep(10 * time.Second) {
+					postRestartRunningPods := waitForPods(f, preRestartPodCount, recoverTimeout)
+					if len(postRestartRunningPods) < preRestartPodCount {
+						framework.Failf("fewer pods are running after systemd restart, got %d but expected %d", len(postRestartRunningPods), preRestartPodCount)
+					}
+				}
+			})
+
+			ginkgo.By("verifying new pods can be started after a dbus restart")
+			postRestartPodCount := 2
+			postRestartPods := newTestPods(postRestartPodCount, false, imageutils.GetPauseImageName(), "restart-dbus-test")
+			createBatchPodWithRateControl(f, postRestartPods, podCreationInterval)
+			defer deletePodsSync(f, postRestartPods)
+
+			allPods = waitForPods(f, preRestartPodCount+postRestartPodCount, startTimeout)
+			if len(allPods) < preRestartPodCount+postRestartPodCount {
+				framework.Failf("Failed to run pods after restarting dbus, got %d but expected %d", len(allPods), preRestartPodCount+postRestartPodCount)
+			}
 		})
 	})
 

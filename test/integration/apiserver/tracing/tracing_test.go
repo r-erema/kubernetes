@@ -19,7 +19,6 @@ package tracing
 import (
 	"context"
 	"fmt"
-	"io/ioutil"
 	"net"
 	"os"
 	"testing"
@@ -35,7 +34,7 @@ import (
 	utilfeature "k8s.io/apiserver/pkg/util/feature"
 	client "k8s.io/client-go/kubernetes"
 	featuregatetesting "k8s.io/component-base/featuregate/testing"
-	"k8s.io/component-base/traces"
+	"k8s.io/component-base/tracing"
 	kubeapiservertesting "k8s.io/kubernetes/cmd/kube-apiserver/app/testing"
 	"k8s.io/kubernetes/test/integration/framework"
 )
@@ -61,13 +60,13 @@ func TestAPIServerTracing(t *testing.T) {
 	defer srv.Stop()
 
 	// Write the configuration for tracing to a file
-	tracingConfigFile, err := ioutil.TempFile("", "tracing-config.yaml")
+	tracingConfigFile, err := os.CreateTemp("", "tracing-config.yaml")
 	if err != nil {
 		t.Fatal(err)
 	}
 	defer os.Remove(tracingConfigFile.Name())
 
-	if err := ioutil.WriteFile(tracingConfigFile.Name(), []byte(fmt.Sprintf(`
+	if err := os.WriteFile(tracingConfigFile.Name(), []byte(fmt.Sprintf(`
 apiVersion: apiserver.config.k8s.io/v1alpha1
 kind: TracingConfiguration
 endpoint: %s`, listener.Addr().String())), os.FileMode(0755)); err != nil {
@@ -75,18 +74,17 @@ endpoint: %s`, listener.Addr().String())), os.FileMode(0755)); err != nil {
 	}
 
 	// Start the API Server with our tracing configuration
-	stopCh := make(chan struct{})
-	defer close(stopCh)
 	testServer := kubeapiservertesting.StartTestServerOrDie(t,
 		kubeapiservertesting.NewDefaultTestServerOptions(),
 		[]string{"--tracing-config-file=" + tracingConfigFile.Name()},
 		framework.SharedEtcd(),
 	)
+	defer testServer.TearDownFn()
 	clientConfig := testServer.ClientConfig
 
 	// Create a client that creates sampled traces.
 	tp := trace.TracerProvider(sdktrace.NewTracerProvider(sdktrace.WithSampler(sdktrace.AlwaysSample())))
-	clientConfig.Wrap(traces.WrapperFor(&tp))
+	clientConfig.Wrap(tracing.WrapperFor(tp))
 	clientSet, err := client.NewForConfig(clientConfig)
 	if err != nil {
 		t.Fatal(err)

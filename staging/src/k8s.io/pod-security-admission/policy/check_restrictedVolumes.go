@@ -76,8 +76,9 @@ func CheckRestrictedVolumes() Check {
 		Level: api.LevelRestricted,
 		Versions: []VersionedCheck{
 			{
-				MinimumVersion: api.MajorMinorVersion(1, 0),
-				CheckPod:       restrictedVolumes_1_0,
+				MinimumVersion:   api.MajorMinorVersion(1, 0),
+				CheckPod:         restrictedVolumes_1_0,
+				OverrideCheckIDs: []CheckID{checkHostPathVolumesID},
 			},
 		},
 	}
@@ -121,8 +122,6 @@ func restrictedVolumes_1_0(podMetadata *metav1.ObjectMeta, podSpec *corev1.PodSp
 				badVolumeTypes.Insert("rbd")
 			case volume.FlexVolume != nil:
 				badVolumeTypes.Insert("flexVolume")
-			case volume.Cinder != nil:
-				badVolumeTypes.Insert("cinder")
 			case volume.CephFS != nil:
 				badVolumeTypes.Insert("cephfs")
 			case volume.Flocker != nil:

@@ -64,7 +64,7 @@ var (
 
 		* Certificate signing request was sent to apiserver and approval was received.
 		* The Kubelet was informed of the new secure connection details.
-		* Control plane (master) label and taint were applied to the new node.
+		* Control plane label and taint were applied to the new node.
 		* The Kubernetes control plane instances scaled up.
 		{{.etcdMessage}}
 
@@ -86,8 +86,10 @@ var (
 
 		There are 2 main schemes for discovery. The first is to use a shared
 		token along with the IP address of the API server. The second is to
-		provide a file - a subset of the standard kubeconfig file. This file
-		can be a local file or downloaded via an HTTPS URL. The forms are
+		provide a file - a subset of the standard kubeconfig file. The
+		discovery/kubeconfig file supports token, client-go authentication
+		plugins ("exec"), "tokenFile", and "authProvider". This file can be a
+		local file or downloaded via an HTTPS URL. The forms are
 		kubeadm join --discovery-token abcdef.1234567890abcdef 1.2.3.4:6443,
 		kubeadm join --discovery-file path/to/file.conf, or kubeadm join
 		--discovery-file https://url/file.conf. Only one form can be used. If
@@ -145,7 +147,7 @@ type joinData struct {
 	cfg                   *kubeadmapi.JoinConfiguration
 	initCfg               *kubeadmapi.InitConfiguration
 	tlsBootstrapCfg       *clientcmdapi.Config
-	clientSet             *clientset.Clientset
+	client                clientset.Interface
 	ignorePreflightErrors sets.String
 	outputWriter          io.Writer
 	patchesDir            string
@@ -155,7 +157,8 @@ type joinData struct {
 
 // newCmdJoin returns "kubeadm join" command.
 // NB. joinOptions is exposed as parameter for allowing unit testing of
-//     the newJoinData method, that implements all the command options validation logic
+//
+//	the newJoinData method, that implements all the command options validation logic
 func newCmdJoin(out io.Writer, joinOptions *joinOptions) *cobra.Command {
 	if joinOptions == nil {
 		joinOptions = newJoinOptions()
@@ -283,10 +286,7 @@ func addJoinConfigFlags(flagSet *flag.FlagSet, cfg *kubeadmapiv1.JoinConfigurati
 
 // addJoinOtherFlags adds join flags that are not bound to a configuration file to the given flagset
 func addJoinOtherFlags(flagSet *flag.FlagSet, joinOptions *joinOptions) {
-	flagSet.StringVar(
-		&joinOptions.cfgPath, options.CfgPath, joinOptions.cfgPath,
-		"Path to kubeadm config file.",
-	)
+	options.AddConfigFlag(flagSet, &joinOptions.cfgPath)
 	flagSet.StringSliceVar(
 		&joinOptions.ignorePreflightErrors, options.IgnorePreflightErrors, joinOptions.ignorePreflightErrors,
 		"A list of checks whose errors will be shown as warnings. Example: 'IsPrivilegedUser,Swap'. Value 'all' ignores errors from all checks.",
@@ -547,10 +547,10 @@ func (j *joinData) InitCfg() (*kubeadmapi.InitConfiguration, error) {
 	return initCfg, err
 }
 
-// ClientSet returns the ClientSet for accessing the cluster with the identity defined in admin.conf.
-func (j *joinData) ClientSet() (*clientset.Clientset, error) {
-	if j.clientSet != nil {
-		return j.clientSet, nil
+// Client returns the Client for accessing the cluster with the identity defined in admin.conf.
+func (j *joinData) Client() (clientset.Interface, error) {
+	if j.client != nil {
+		return j.client, nil
 	}
 	path := filepath.Join(j.KubeConfigDir(), kubeadmconstants.AdminKubeConfigFileName)
 
@@ -558,7 +558,7 @@ func (j *joinData) ClientSet() (*clientset.Clientset, error) {
 	if err != nil {
 		return nil, errors.Wrap(err, "[preflight] couldn't create Kubernetes client")
 	}
-	j.clientSet = client
+	j.client = client
 	return client, nil
 }
 
@@ -618,7 +618,7 @@ func fetchInitConfiguration(tlsBootstrapCfg *clientcmdapi.Config) (*kubeadmapi.I
 	}
 
 	// Fetches the init configuration
-	initConfiguration, err := configutil.FetchInitConfigurationFromCluster(tlsClient, os.Stdout, "preflight", true, false)
+	initConfiguration, err := configutil.FetchInitConfigurationFromCluster(tlsClient, nil, "preflight", true, false)
 	if err != nil {
 		return nil, errors.Wrap(err, "unable to fetch the kubeadm-config ConfigMap")
 	}

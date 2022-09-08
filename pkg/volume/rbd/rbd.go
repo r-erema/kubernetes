@@ -19,17 +19,10 @@ package rbd
 import (
 	"context"
 	"fmt"
-	utilfeature "k8s.io/apiserver/pkg/util/feature"
-	"k8s.io/kubernetes/pkg/features"
 	"os"
 	"path/filepath"
 	"regexp"
 	dstrings "strings"
-
-	"k8s.io/klog/v2"
-	"k8s.io/mount-utils"
-	utilexec "k8s.io/utils/exec"
-	utilstrings "k8s.io/utils/strings"
 
 	v1 "k8s.io/api/core/v1"
 	"k8s.io/apimachinery/pkg/api/resource"
@@ -37,14 +30,21 @@ import (
 	"k8s.io/apimachinery/pkg/types"
 	"k8s.io/apimachinery/pkg/util/sets"
 	"k8s.io/apimachinery/pkg/util/uuid"
+	utilfeature "k8s.io/apiserver/pkg/util/feature"
 	clientset "k8s.io/client-go/kubernetes"
+	"k8s.io/klog/v2"
+	"k8s.io/kubernetes/pkg/features"
 	"k8s.io/kubernetes/pkg/volume"
 	volutil "k8s.io/kubernetes/pkg/volume/util"
 	"k8s.io/kubernetes/pkg/volume/util/volumepathhandler"
+	"k8s.io/mount-utils"
+	utilexec "k8s.io/utils/exec"
+	utilstrings "k8s.io/utils/strings"
 )
 
 var (
 	supportedFeatures = sets.NewString("layering")
+	pathSeparator     = string(os.PathSeparator)
 )
 
 // ProbeVolumePlugins is the primary entrypoint for volume plugins.
@@ -81,8 +81,7 @@ func getPath(uid types.UID, volName string, host volume.VolumeHost) string {
 }
 
 func (plugin *rbdPlugin) IsMigratedToCSI() bool {
-	return utilfeature.DefaultFeatureGate.Enabled(features.CSIMigration) &&
-		utilfeature.DefaultFeatureGate.Enabled(features.CSIMigrationRBD)
+	return utilfeature.DefaultFeatureGate.Enabled(features.CSIMigrationRBD)
 }
 
 func (plugin *rbdPlugin) Init(host volume.VolumeHost) error {
@@ -124,6 +123,10 @@ func (plugin *rbdPlugin) SupportsMountOption() bool {
 
 func (plugin *rbdPlugin) SupportsBulkVolumeVerification() bool {
 	return false
+}
+
+func (plugin *rbdPlugin) SupportsSELinuxContextMount(spec *volume.Spec) (bool, error) {
+	return false, nil
 }
 
 func (plugin *rbdPlugin) GetAccessModes() []v1.PersistentVolumeAccessMode {
@@ -832,17 +835,10 @@ var _ volume.Mounter = &rbdMounter{}
 
 func (rbd *rbd) GetAttributes() volume.Attributes {
 	return volume.Attributes{
-		ReadOnly:        rbd.ReadOnly,
-		Managed:         !rbd.ReadOnly,
-		SupportsSELinux: true,
+		ReadOnly:       rbd.ReadOnly,
+		Managed:        !rbd.ReadOnly,
+		SELinuxRelabel: true,
 	}
-}
-
-// Checks prior to mount operations to verify that the required components (binaries, etc.)
-// to mount the volume are available on the underlying node.
-// If not, it returns an error
-func (b *rbdMounter) CanMount() error {
-	return nil
 }
 
 func (b *rbdMounter) SetUp(mounterArgs volume.MounterArgs) error {
@@ -855,6 +851,7 @@ func (b *rbdMounter) SetUpAt(dir string, mounterArgs volume.MounterArgs) error {
 	err := diskSetUp(b.manager, *b, dir, b.mounter, mounterArgs.FsGroup, mounterArgs.FSGroupChangePolicy)
 	if err != nil {
 		klog.Errorf("rbd: failed to setup at %s %v", dir, err)
+		return err
 	}
 	klog.V(3).Infof("rbd: successfully setup at %s", dir)
 	return err
@@ -957,7 +954,7 @@ type rbdDiskUnmapper struct {
 
 func getPoolAndImageFromMapPath(mapPath string) (string, string, error) {
 
-	pathParts := dstrings.Split(mapPath, "/")
+	pathParts := dstrings.Split(mapPath, pathSeparator)
 	if len(pathParts) < 2 {
 		return "", "", fmt.Errorf("corrupted mapPath")
 	}

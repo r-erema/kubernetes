@@ -56,8 +56,6 @@ const (
 	gcePDVolumeFilterType = "GCE"
 	// azureDiskVolumeFilterType defines the filter name for azureDiskVolumeFilter.
 	azureDiskVolumeFilterType = "AzureDisk"
-	// cinderVolumeFilterType defines the filter name for cinderVolumeFilter.
-	cinderVolumeFilterType = "Cinder"
 
 	// ErrReasonMaxVolumeCountExceeded is used for MaxVolumeCount predicate error.
 	ErrReasonMaxVolumeCountExceeded = "node(s) exceed max volume count"
@@ -73,15 +71,6 @@ const AzureDiskName = names.AzureDiskLimits
 func NewAzureDisk(_ runtime.Object, handle framework.Handle, fts feature.Features) (framework.Plugin, error) {
 	informerFactory := handle.SharedInformerFactory()
 	return newNonCSILimitsWithInformerFactory(azureDiskVolumeFilterType, informerFactory, fts), nil
-}
-
-// CinderName is the name of the plugin used in the plugin registry and configurations.
-const CinderName = names.CinderLimits
-
-// NewCinder returns function that initializes a new plugin and returns it.
-func NewCinder(_ runtime.Object, handle framework.Handle, fts feature.Features) (framework.Plugin, error) {
-	informerFactory := handle.SharedInformerFactory()
-	return newNonCSILimitsWithInformerFactory(cinderVolumeFilterType, informerFactory, fts), nil
 }
 
 // EBSName is the name of the plugin used in the plugin registry and configurations.
@@ -171,10 +160,6 @@ func newNonCSILimits(
 		name = AzureDiskName
 		filter = azureDiskVolumeFilter
 		volumeLimitKey = v1.ResourceName(volumeutil.AzureVolumeLimitKey)
-	case cinderVolumeFilterType:
-		name = CinderName
-		filter = cinderVolumeFilter
-		volumeLimitKey = v1.ResourceName(volumeutil.CinderVolumeLimitKey)
 	default:
 		klog.ErrorS(errors.New("wrong filterName"), "Cannot create nonCSILimits plugin")
 		return nil
@@ -416,11 +401,8 @@ var ebsVolumeFilter = VolumeFilter{
 		return "", false
 	},
 
-	MatchProvisioner: func(sc *storage.StorageClass) (relevant bool) {
-		if sc.Provisioner == csilibplugins.AWSEBSInTreePluginName {
-			return true
-		}
-		return false
+	MatchProvisioner: func(sc *storage.StorageClass) bool {
+		return sc.Provisioner == csilibplugins.AWSEBSInTreePluginName
 	},
 
 	IsMigrated: func(csiNode *storage.CSINode) bool {
@@ -444,11 +426,8 @@ var gcePDVolumeFilter = VolumeFilter{
 		return "", false
 	},
 
-	MatchProvisioner: func(sc *storage.StorageClass) (relevant bool) {
-		if sc.Provisioner == csilibplugins.GCEPDInTreePluginName {
-			return true
-		}
-		return false
+	MatchProvisioner: func(sc *storage.StorageClass) bool {
+		return sc.Provisioner == csilibplugins.GCEPDInTreePluginName
 	},
 
 	IsMigrated: func(csiNode *storage.CSINode) bool {
@@ -472,44 +451,12 @@ var azureDiskVolumeFilter = VolumeFilter{
 		return "", false
 	},
 
-	MatchProvisioner: func(sc *storage.StorageClass) (relevant bool) {
-		if sc.Provisioner == csilibplugins.AzureDiskInTreePluginName {
-			return true
-		}
-		return false
+	MatchProvisioner: func(sc *storage.StorageClass) bool {
+		return sc.Provisioner == csilibplugins.AzureDiskInTreePluginName
 	},
 
 	IsMigrated: func(csiNode *storage.CSINode) bool {
 		return isCSIMigrationOn(csiNode, csilibplugins.AzureDiskInTreePluginName)
-	},
-}
-
-// cinderVolumeFilter is a VolumeFilter for filtering cinder Volumes.
-// It will be deprecated once Openstack cloudprovider has been removed from in-tree.
-var cinderVolumeFilter = VolumeFilter{
-	FilterVolume: func(vol *v1.Volume) (string, bool) {
-		if vol.Cinder != nil {
-			return vol.Cinder.VolumeID, true
-		}
-		return "", false
-	},
-
-	FilterPersistentVolume: func(pv *v1.PersistentVolume) (string, bool) {
-		if pv.Spec.Cinder != nil {
-			return pv.Spec.Cinder.VolumeID, true
-		}
-		return "", false
-	},
-
-	MatchProvisioner: func(sc *storage.StorageClass) (relevant bool) {
-		if sc.Provisioner == csilibplugins.CinderInTreePluginName {
-			return true
-		}
-		return false
-	},
-
-	IsMigrated: func(csiNode *storage.CSINode) bool {
-		return isCSIMigrationOn(csiNode, csilibplugins.CinderInTreePluginName)
 	},
 }
 
@@ -534,8 +481,6 @@ func getMaxVolumeFunc(filterName string) func(node *v1.Node) int {
 			return defaultMaxGCEPDVolumes
 		case azureDiskVolumeFilterType:
 			return defaultMaxAzureDiskVolumes
-		case cinderVolumeFilterType:
-			return volumeutil.DefaultMaxCinderVolumes
 		default:
 			return -1
 		}

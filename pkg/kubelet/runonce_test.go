@@ -114,7 +114,6 @@ func TestRunOnce(t *testing.T) {
 		kb.hostutil,
 		kb.getPodsDir(),
 		kb.recorder,
-		false, /* experimentalCheckNodeCapabilitiesBeforeMount */
 		false, /* keepTerminatedPodVolumes */
 		volumetest.NewBlockVolumePathHandler())
 
@@ -131,7 +130,7 @@ func TestRunOnce(t *testing.T) {
 		return nil
 	}
 	fakeMirrodPodFunc := func(*v1.Pod) (*v1.Pod, bool) { return nil, false }
-	evictionManager, evictionAdmitHandler := eviction.NewManager(kb.resourceAnalyzer, eviction.Config{}, fakeKillPodFunc, fakeMirrodPodFunc, nil, nil, kb.recorder, nodeRef, kb.clock)
+	evictionManager, evictionAdmitHandler := eviction.NewManager(kb.resourceAnalyzer, eviction.Config{}, fakeKillPodFunc, fakeMirrodPodFunc, nil, nil, kb.recorder, nodeRef, kb.clock, kb.supportLocalStorageCapacityIsolation())
 
 	kb.evictionManager = evictionManager
 	kb.admitHandlers.AddPodAdmitHandler(evictionAdmitHandler)

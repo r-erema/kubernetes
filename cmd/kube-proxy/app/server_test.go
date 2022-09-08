@@ -19,7 +19,6 @@ package app
 import (
 	"errors"
 	"fmt"
-	"io/ioutil"
 	"os"
 	"path/filepath"
 	"reflect"
@@ -32,7 +31,7 @@ import (
 
 	"github.com/stretchr/testify/assert"
 
-	utilpointer "k8s.io/utils/pointer"
+	"k8s.io/utils/pointer"
 
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	componentbaseconfig "k8s.io/component-base/config"
@@ -69,8 +68,8 @@ func TestGetConntrackMax(t *testing.T) {
 
 	for i, tc := range testCases {
 		cfg := kubeproxyconfig.KubeProxyConntrackConfiguration{
-			Min:        utilpointer.Int32Ptr(tc.min),
-			MaxPerCore: utilpointer.Int32Ptr(tc.maxPerCore),
+			Min:        pointer.Int32(tc.min),
+			MaxPerCore: pointer.Int32(tc.maxPerCore),
 		}
 		x, e := getConntrackMax(cfg)
 		if e != nil {
@@ -123,6 +122,9 @@ oomScoreAdj: 17
 portRange: "2-7"
 udpIdleTimeout: 123ms
 detectLocalMode: "ClusterCIDR"
+detectLocal:
+  bridgeInterface: "cbr0"
+  interfaceNamePrefix: "veth"
 nodePortAddresses:
   - "10.20.30.40/16"
   - "fd00:1::0/64"
@@ -238,8 +240,8 @@ nodePortAddresses:
 			ClusterCIDR:      tc.clusterCIDR,
 			ConfigSyncPeriod: metav1.Duration{Duration: 15 * time.Second},
 			Conntrack: kubeproxyconfig.KubeProxyConntrackConfiguration{
-				MaxPerCore:            utilpointer.Int32Ptr(2),
-				Min:                   utilpointer.Int32Ptr(1),
+				MaxPerCore:            pointer.Int32(2),
+				Min:                   pointer.Int32(1),
 				TCPCloseWaitTimeout:   &metav1.Duration{Duration: 10 * time.Second},
 				TCPEstablishedTimeout: &metav1.Duration{Duration: 20 * time.Second},
 			},
@@ -248,7 +250,7 @@ nodePortAddresses:
 			HostnameOverride:   "foo",
 			IPTables: kubeproxyconfig.KubeProxyIPTablesConfiguration{
 				MasqueradeAll: true,
-				MasqueradeBit: utilpointer.Int32Ptr(17),
+				MasqueradeBit: pointer.Int32(17),
 				MinSyncPeriod: metav1.Duration{Duration: 10 * time.Second},
 				SyncPeriod:    metav1.Duration{Duration: 60 * time.Second},
 			},
@@ -259,11 +261,15 @@ nodePortAddresses:
 			},
 			MetricsBindAddress: tc.metricsBindAddress,
 			Mode:               kubeproxyconfig.ProxyMode(tc.mode),
-			OOMScoreAdj:        utilpointer.Int32Ptr(17),
+			OOMScoreAdj:        pointer.Int32(17),
 			PortRange:          "2-7",
 			UDPIdleTimeout:     metav1.Duration{Duration: 123 * time.Millisecond},
 			NodePortAddresses:  []string{"10.20.30.40/16", "fd00:1::0/64"},
 			DetectLocalMode:    kubeproxyconfig.LocalModeClusterCIDR,
+			DetectLocal: kubeproxyconfig.DetectLocalConfiguration{
+				BridgeInterface:     string("cbr0"),
+				InterfaceNamePrefix: string("veth"),
+			},
 		}
 
 		options := NewOptions()
@@ -406,7 +412,7 @@ func TestProcessHostnameOverrideFlag(t *testing.T) {
 
 func TestConfigChange(t *testing.T) {
 	setUp := func() (*os.File, string, error) {
-		tempDir, err := ioutil.TempDir("", "kubeproxy-config-change")
+		tempDir, err := os.MkdirTemp("", "kubeproxy-config-change")
 		if err != nil {
 			return nil, "", fmt.Errorf("unable to create temporary directory: %v", err)
 		}
@@ -451,7 +457,7 @@ mode: ""
 nodePortAddresses: null
 oomScoreAdj: -999
 portRange: ""
-detectLocalMode: "ClusterCIDR"
+detectLocalMode: "BridgeInterface"
 udpIdleTimeout: 250ms`)
 		if err != nil {
 			return nil, "", fmt.Errorf("unexpected error when writing content to temp kube-proxy config file: %v", err)

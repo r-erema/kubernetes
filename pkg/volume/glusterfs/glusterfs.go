@@ -25,7 +25,6 @@ import (
 	"net/http"
 	"os"
 	"path/filepath"
-	"runtime"
 	"strconv"
 	dstrings "strings"
 	"sync"
@@ -73,14 +72,13 @@ var _ volume.Provisioner = &glusterfsVolumeProvisioner{}
 var _ volume.Deleter = &glusterfsVolumeDeleter{}
 
 const (
-	glusterfsPluginName            = "kubernetes.io/glusterfs"
-	volPrefix                      = "vol_"
-	dynamicEpSvcPrefix             = "glusterfs-dynamic"
-	replicaCount                   = 3
-	secretKeyName                  = "key" // key name used in secret
-	gciLinuxGlusterMountBinaryPath = "/sbin/mount.glusterfs"
-	defaultGidMin                  = 2000
-	defaultGidMax                  = math.MaxInt32
+	glusterfsPluginName = "kubernetes.io/glusterfs"
+	volPrefix           = "vol_"
+	dynamicEpSvcPrefix  = "glusterfs-dynamic"
+	replicaCount        = 3
+	secretKeyName       = "key" // key name used in secret
+	defaultGidMin       = 2000
+	defaultGidMax       = math.MaxInt32
 
 	// maxCustomEpNamePrefix is the maximum number of chars.
 	// which can be used as ep/svc name prefix. This number is carved
@@ -132,6 +130,10 @@ func (plugin *glusterfsPlugin) SupportsMountOption() bool {
 
 func (plugin *glusterfsPlugin) SupportsBulkVolumeVerification() bool {
 	return false
+}
+
+func (plugin *glusterfsPlugin) SupportsSELinuxContextMount(spec *volume.Spec) (bool, error) {
+	return false, nil
 }
 
 func (plugin *glusterfsPlugin) RequiresFSResize() bool {
@@ -251,24 +253,10 @@ var _ volume.Mounter = &glusterfsMounter{}
 
 func (b *glusterfsMounter) GetAttributes() volume.Attributes {
 	return volume.Attributes{
-		ReadOnly:        b.readOnly,
-		Managed:         false,
-		SupportsSELinux: false,
+		ReadOnly:       b.readOnly,
+		Managed:        false,
+		SELinuxRelabel: false,
 	}
-}
-
-// Checks prior to mount operations to verify that the required components (binaries, etc.)
-// to mount the volume are available on the underlying node.
-// If not, it returns an error
-func (b *glusterfsMounter) CanMount() error {
-	exe := b.plugin.host.GetExec(b.plugin.GetPluginName())
-	switch runtime.GOOS {
-	case "linux":
-		if _, err := exe.Command("test", "-x", gciLinuxGlusterMountBinaryPath).CombinedOutput(); err != nil {
-			return fmt.Errorf("required binary %s is missing", gciLinuxGlusterMountBinaryPath)
-		}
-	}
-	return nil
 }
 
 // SetUp attaches the disk and bind mounts to the volume path.
@@ -431,7 +419,7 @@ func (b *glusterfsMounter) setUpAtInternal(dir string) error {
 
 }
 
-//getVolumeInfo returns 'path' and 'readonly' field values from the provided glusterfs spec.
+// getVolumeInfo returns 'path' and 'readonly' field values from the provided glusterfs spec.
 func getVolumeInfo(spec *volume.Spec) (string, bool, error) {
 	if spec.Volume != nil && spec.Volume.Glusterfs != nil {
 		return spec.Volume.Glusterfs.Path, spec.Volume.Glusterfs.ReadOnly, nil
@@ -575,9 +563,9 @@ func (plugin *glusterfsPlugin) collectGids(className string, gidTable *MinMaxAll
 }
 
 // Return the gid table for a storage class.
-// - If this is the first time, fill it with all the gids
-//   used in PVs of this storage class by traversing the PVs.
-// - Adapt the range of the table to the current range of the SC.
+//   - If this is the first time, fill it with all the gids
+//     used in PVs of this storage class by traversing the PVs.
+//   - Adapt the range of the table to the current range of the SC.
 func (plugin *glusterfsPlugin) getGidTable(className string, min int, max int) (*MinMaxAllocator, error) {
 	plugin.gidTableLock.Lock()
 	gidTable, ok := plugin.gidTable[className]

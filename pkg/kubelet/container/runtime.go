@@ -69,9 +69,6 @@ type Runtime interface {
 	// Type returns the type of the container runtime.
 	Type() string
 
-	//SupportsSingleFileMapping returns whether the container runtime supports single file mappings or not.
-	SupportsSingleFileMapping() bool
-
 	// Version returns the version information of the container runtime.
 	Version() (Version, error)
 
@@ -122,6 +119,9 @@ type Runtime interface {
 	// This method just proxies a new runtimeConfig with the updated
 	// CIDR value down to the runtime shim.
 	UpdatePodCIDR(podCIDR string) error
+	// CheckpointContainer tells the runtime to checkpoint a container
+	// and store the resulting archive to the checkpoint directory.
+	CheckpointContainer(options *runtimeapi.CheckpointContainerRequest) error
 }
 
 // StreamingRuntime is the interface implemented by runtimes that handle the serving of the

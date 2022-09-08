@@ -23,6 +23,9 @@ import (
 	"testing"
 	"time"
 
+	"google.golang.org/grpc/codes"
+	"google.golang.org/grpc/status"
+
 	cadvisorapi "github.com/google/cadvisor/info/v1"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -32,14 +35,11 @@ import (
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/types"
 	"k8s.io/apimachinery/pkg/util/sets"
-	utilfeature "k8s.io/apiserver/pkg/util/feature"
 	"k8s.io/client-go/util/flowcontrol"
-	featuregatetesting "k8s.io/component-base/featuregate/testing"
 	runtimeapi "k8s.io/cri-api/pkg/apis/runtime/v1"
 	apitest "k8s.io/cri-api/pkg/apis/testing"
 	podutil "k8s.io/kubernetes/pkg/api/v1/pod"
 	"k8s.io/kubernetes/pkg/credentialprovider"
-	"k8s.io/kubernetes/pkg/features"
 	kubecontainer "k8s.io/kubernetes/pkg/kubelet/container"
 	containertest "k8s.io/kubernetes/pkg/kubelet/container/testing"
 	proberesults "k8s.io/kubernetes/pkg/kubelet/prober/results"
@@ -334,6 +334,82 @@ func TestGetPodStatus(t *testing.T) {
 	assert.Equal(t, apitest.FakePodSandboxIPs, podStatus.IPs)
 }
 
+func TestStopContainerWithNotFoundError(t *testing.T) {
+	fakeRuntime, _, m, err := createTestRuntimeManager()
+	assert.NoError(t, err)
+
+	containers := []v1.Container{
+		{
+			Name:            "foo1",
+			Image:           "busybox",
+			ImagePullPolicy: v1.PullIfNotPresent,
+		},
+		{
+			Name:            "foo2",
+			Image:           "busybox",
+			ImagePullPolicy: v1.PullIfNotPresent,
+		},
+	}
+	pod := &v1.Pod{
+		ObjectMeta: metav1.ObjectMeta{
+			UID:       "12345678",
+			Name:      "foo",
+			Namespace: "new",
+		},
+		Spec: v1.PodSpec{
+			Containers: containers,
+		},
+	}
+
+	// Set fake sandbox and faked containers to fakeRuntime.
+	makeAndSetFakePod(t, m, fakeRuntime, pod)
+	fakeRuntime.InjectError("StopContainer", status.Error(codes.NotFound, "No such container"))
+	podStatus, err := m.GetPodStatus(pod.UID, pod.Name, pod.Namespace)
+	require.NoError(t, err)
+	p := kubecontainer.ConvertPodStatusToRunningPod("", podStatus)
+	gracePeriod := int64(1)
+	err = m.KillPod(pod, p, &gracePeriod)
+	require.NoError(t, err)
+}
+
+func TestGetPodStatusWithNotFoundError(t *testing.T) {
+	fakeRuntime, _, m, err := createTestRuntimeManager()
+	assert.NoError(t, err)
+
+	containers := []v1.Container{
+		{
+			Name:            "foo1",
+			Image:           "busybox",
+			ImagePullPolicy: v1.PullIfNotPresent,
+		},
+		{
+			Name:            "foo2",
+			Image:           "busybox",
+			ImagePullPolicy: v1.PullIfNotPresent,
+		},
+	}
+	pod := &v1.Pod{
+		ObjectMeta: metav1.ObjectMeta{
+			UID:       "12345678",
+			Name:      "foo",
+			Namespace: "new",
+		},
+		Spec: v1.PodSpec{
+			Containers: containers,
+		},
+	}
+
+	// Set fake sandbox and faked containers to fakeRuntime.
+	makeAndSetFakePod(t, m, fakeRuntime, pod)
+	fakeRuntime.InjectError("ContainerStatus", status.Error(codes.NotFound, "No such container"))
+	podStatus, err := m.GetPodStatus(pod.UID, pod.Name, pod.Namespace)
+	require.NoError(t, err)
+	require.Equal(t, pod.UID, podStatus.ID)
+	require.Equal(t, pod.Name, podStatus.Name)
+	require.Equal(t, pod.Namespace, podStatus.Namespace)
+	require.Equal(t, apitest.FakePodSandboxIPs, podStatus.IPs)
+}
+
 func TestGetPods(t *testing.T) {
 	fakeRuntime, _, m, err := createTestRuntimeManager()
 	assert.NoError(t, err)
@@ -411,9 +487,6 @@ func TestGetPods(t *testing.T) {
 }
 
 func TestKillPod(t *testing.T) {
-	// Tests that KillPod also kills Ephemeral Containers
-	defer featuregatetesting.SetFeatureGateDuringTest(t, utilfeature.DefaultFeatureGate, features.EphemeralContainers, true)()
-
 	fakeRuntime, _, m, err := createTestRuntimeManager()
 	assert.NoError(t, err)
 
@@ -1293,7 +1366,6 @@ func makeBasePodAndStatusWithInitContainers() (*v1.Pod, *kubecontainer.PodStatus
 }
 
 func TestComputePodActionsWithInitAndEphemeralContainers(t *testing.T) {
-	defer featuregatetesting.SetFeatureGateDuringTest(t, utilfeature.DefaultFeatureGate, features.EphemeralContainers, true)()
 	// Make sure existing test cases pass with feature enabled
 	TestComputePodActions(t)
 	TestComputePodActionsWithInitContainers(t)

@@ -318,7 +318,7 @@ func (o *BuiltInAuthenticationOptions) AddFlags(fs *pflag.FlagSet) {
 			"ServiceAccount tokens. The specified file can contain multiple keys, and the flag can "+
 			"be specified multiple times with different files. If unspecified, "+
 			"--tls-private-key-file is used. Must be specified when "+
-			"--service-account-signing-key is provided")
+			"--service-account-signing-key-file is provided")
 
 		fs.BoolVar(&o.ServiceAccounts.Lookup, "service-account-lookup", o.ServiceAccounts.Lookup,
 			"If true, validate ServiceAccount tokens exist in etcd as part of authentication.")
@@ -340,12 +340,6 @@ func (o *BuiltInAuthenticationOptions) AddFlags(fs *pflag.FlagSet) {
 			"/.well-known/openid-configuration. This flag is useful if the discovery doc"+
 			"and key set are served to relying parties from a URL other than the "+
 			"API server's external (as auto-detected or overridden with external-hostname). ")
-
-		// Deprecated in 1.13
-		fs.StringSliceVar(&o.APIAudiences, "service-account-api-audiences", o.APIAudiences, ""+
-			"Identifiers of the API. The service account token authenticator will validate that "+
-			"tokens used against the API are bound to at least one of these audiences.")
-		fs.MarkDeprecated("service-account-api-audiences", "Use --api-audiences")
 
 		fs.DurationVar(&o.ServiceAccounts.MaxExpiration, "service-account-max-token-expiration", o.ServiceAccounts.MaxExpiration, ""+
 			"The maximum validity duration of a token created by the service account token issuer. If an otherwise valid "+
@@ -454,7 +448,7 @@ func (o *BuiltInAuthenticationOptions) ToAuthenticationConfig() (kubeauthenticat
 }
 
 // ApplyTo requires already applied OpenAPIConfig and EgressSelector if present.
-func (o *BuiltInAuthenticationOptions) ApplyTo(authInfo *genericapiserver.AuthenticationInfo, secureServing *genericapiserver.SecureServingInfo, egressSelector *egressselector.EgressSelector, openAPIConfig *openapicommon.Config, extclient kubernetes.Interface, versionedInformer informers.SharedInformerFactory) error {
+func (o *BuiltInAuthenticationOptions) ApplyTo(authInfo *genericapiserver.AuthenticationInfo, secureServing *genericapiserver.SecureServingInfo, egressSelector *egressselector.EgressSelector, openAPIConfig *openapicommon.Config, openAPIV3Config *openapicommon.Config, extclient kubernetes.Interface, versionedInformer informers.SharedInformerFactory) error {
 	if o == nil {
 		return nil
 	}
@@ -504,6 +498,9 @@ func (o *BuiltInAuthenticationOptions) ApplyTo(authInfo *genericapiserver.Authen
 	}
 
 	authInfo.Authenticator, openAPIConfig.SecurityDefinitions, err = authenticatorConfig.New()
+	if openAPIV3Config != nil {
+		openAPIV3Config.SecurityDefinitions = openAPIConfig.SecurityDefinitions
+	}
 	if err != nil {
 		return err
 	}

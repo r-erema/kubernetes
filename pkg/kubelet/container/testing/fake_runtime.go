@@ -179,10 +179,6 @@ func (f *FakeRuntime) Type() string {
 	return f.RuntimeType
 }
 
-func (f *FakeRuntime) SupportsSingleFileMapping() bool {
-	return true
-}
-
 func (f *FakeRuntime) Version() (kubecontainer.Version, error) {
 	f.Lock()
 	defer f.Unlock()
@@ -363,6 +359,14 @@ func (f *FakeRuntime) DeleteContainer(containerID kubecontainer.ContainerID) err
 	defer f.Unlock()
 
 	f.CalledFunctions = append(f.CalledFunctions, "DeleteContainer")
+	return f.Err
+}
+
+func (f *FakeRuntime) CheckpointContainer(options *runtimeapi.CheckpointContainerRequest) error {
+	f.Lock()
+	defer f.Unlock()
+
+	f.CalledFunctions = append(f.CalledFunctions, "CheckpointContainer")
 	return f.Err
 }
 

@@ -68,8 +68,6 @@ func (pm PluginManager) IsMigrationCompleteForPlugin(pluginName string) bool {
 		return pm.featureGate.Enabled(features.InTreePluginAzureFileUnregister)
 	case csilibplugins.AzureDiskInTreePluginName:
 		return pm.featureGate.Enabled(features.InTreePluginAzureDiskUnregister)
-	case csilibplugins.CinderInTreePluginName:
-		return pm.featureGate.Enabled(features.InTreePluginOpenStackUnregister)
 	case csilibplugins.VSphereInTreePluginName:
 		return pm.featureGate.Enabled(features.InTreePluginvSphereUnregister)
 	case csilibplugins.PortworxVolumePluginName:
@@ -85,9 +83,7 @@ func (pm PluginManager) IsMigrationCompleteForPlugin(pluginName string) bool {
 // for a particular storage plugin
 func (pm PluginManager) IsMigrationEnabledForPlugin(pluginName string) bool {
 	// CSIMigration feature should be enabled along with the plugin-specific one
-	if !pm.featureGate.Enabled(features.CSIMigration) {
-		return false
-	}
+	// CSIMigration has been GA. It will be enabled by default.
 
 	switch pluginName {
 	case csilibplugins.AWSEBSInTreePluginName:
@@ -98,8 +94,6 @@ func (pm PluginManager) IsMigrationEnabledForPlugin(pluginName string) bool {
 		return pm.featureGate.Enabled(features.CSIMigrationAzureFile)
 	case csilibplugins.AzureDiskInTreePluginName:
 		return pm.featureGate.Enabled(features.CSIMigrationAzureDisk)
-	case csilibplugins.CinderInTreePluginName:
-		return true
 	case csilibplugins.VSphereInTreePluginName:
 		return pm.featureGate.Enabled(features.CSIMigrationvSphere)
 	case csilibplugins.PortworxVolumePluginName:
@@ -163,11 +157,7 @@ func TranslateInTreeSpecToCSI(spec *volume.Spec, podNamespace string, translator
 // by looking up the pluginUnregister flag
 func CheckMigrationFeatureFlags(f featuregate.FeatureGate, pluginMigration,
 	pluginUnregister featuregate.Feature) (migrationComplete bool, err error) {
-	if f.Enabled(pluginMigration) && !f.Enabled(features.CSIMigration) {
-		return false, fmt.Errorf("enabling %q requires CSIMigration to be enabled", pluginMigration)
-	}
-
-	// This is for other in-tree plugin that get migration finished
+	// This is for in-tree plugin that get migration finished
 	if f.Enabled(pluginMigration) && f.Enabled(pluginUnregister) {
 		return true, nil
 	}

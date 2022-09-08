@@ -24,6 +24,7 @@ import (
 	"time"
 
 	cadvisorapi "github.com/google/cadvisor/info/v1"
+	crierror "k8s.io/cri-api/pkg/errors"
 	"k8s.io/klog/v2"
 
 	v1 "k8s.io/api/core/v1"
@@ -46,6 +47,7 @@ import (
 	kubecontainer "k8s.io/kubernetes/pkg/kubelet/container"
 	"k8s.io/kubernetes/pkg/kubelet/events"
 	"k8s.io/kubernetes/pkg/kubelet/images"
+	runtimeutil "k8s.io/kubernetes/pkg/kubelet/kuberuntime/util"
 	"k8s.io/kubernetes/pkg/kubelet/lifecycle"
 	"k8s.io/kubernetes/pkg/kubelet/logs"
 	"k8s.io/kubernetes/pkg/kubelet/metrics"
@@ -194,6 +196,8 @@ func NewKubeGenericRuntimeManager(
 	getNodeAllocatable func() v1.ResourceList,
 	memoryThrottlingFactor float64,
 ) (KubeGenericRuntime, error) {
+	runtimeService = newInstrumentedRuntimeService(runtimeService)
+	imageService = newInstrumentedImageManagerService(imageService)
 	kubeRuntimeManager := &kubeGenericRuntimeManager{
 		recorder:               recorder,
 		cpuCFSQuota:            cpuCFSQuota,
@@ -205,8 +209,8 @@ func NewKubeGenericRuntimeManager(
 		machineInfo:            machineInfo,
 		osInterface:            osInterface,
 		runtimeHelper:          runtimeHelper,
-		runtimeService:         newInstrumentedRuntimeService(runtimeService),
-		imageService:           newInstrumentedImageManagerService(imageService),
+		runtimeService:         runtimeService,
+		imageService:           imageService,
 		internalLifecycle:      internalLifecycle,
 		logManager:             logManager,
 		runtimeClassManager:    runtimeClassManager,
@@ -286,12 +290,6 @@ func (m *kubeGenericRuntimeManager) Type() string {
 	return m.runtimeName
 }
 
-// SupportsSingleFileMapping returns whether the container runtime supports single file mappings or not.
-// It is supported on Windows only if the container runtime is containerd.
-func (m *kubeGenericRuntimeManager) SupportsSingleFileMapping() bool {
-	return true
-}
-
 func newRuntimeVersion(version string) (*utilversion.Version, error) {
 	if ver, err := utilversion.ParseSemantic(version); err == nil {
 		return ver, err
@@ -333,11 +331,14 @@ func (m *kubeGenericRuntimeManager) APIVersion() (kubecontainer.Version, error) 
 // Status returns the status of the runtime. An error is returned if the Status
 // function itself fails, nil otherwise.
 func (m *kubeGenericRuntimeManager) Status() (*kubecontainer.RuntimeStatus, error) {
-	status, err := m.runtimeService.Status()
+	resp, err := m.runtimeService.Status(false)
 	if err != nil {
 		return nil, err
 	}
-	return toKubeRuntimeStatus(status), nil
+	if resp.GetStatus() == nil {
+		return nil, errors.New("runtime status is nil")
+	}
+	return toKubeRuntimeStatus(resp.GetStatus()), nil
 }
 
 // GetPods returns a list of containers grouped by pods. The boolean parameter
@@ -462,48 +463,6 @@ type podActions struct {
 	EphemeralContainersToStart []int
 }
 
-// podSandboxChanged checks whether the spec of the pod is changed and returns
-// (changed, new attempt, original sandboxID if exist).
-func (m *kubeGenericRuntimeManager) podSandboxChanged(pod *v1.Pod, podStatus *kubecontainer.PodStatus) (bool, uint32, string) {
-	if len(podStatus.SandboxStatuses) == 0 {
-		klog.V(2).InfoS("No sandbox for pod can be found. Need to start a new one", "pod", klog.KObj(pod))
-		return true, 0, ""
-	}
-
-	readySandboxCount := 0
-	for _, s := range podStatus.SandboxStatuses {
-		if s.State == runtimeapi.PodSandboxState_SANDBOX_READY {
-			readySandboxCount++
-		}
-	}
-
-	// Needs to create a new sandbox when readySandboxCount > 1 or the ready sandbox is not the latest one.
-	sandboxStatus := podStatus.SandboxStatuses[0]
-	if readySandboxCount > 1 {
-		klog.V(2).InfoS("Multiple sandboxes are ready for Pod. Need to reconcile them", "pod", klog.KObj(pod))
-
-		return true, sandboxStatus.Metadata.Attempt + 1, sandboxStatus.Id
-	}
-	if sandboxStatus.State != runtimeapi.PodSandboxState_SANDBOX_READY {
-		klog.V(2).InfoS("No ready sandbox for pod can be found. Need to start a new one", "pod", klog.KObj(pod))
-		return true, sandboxStatus.Metadata.Attempt + 1, sandboxStatus.Id
-	}
-
-	// Needs to create a new sandbox when network namespace changed.
-	if sandboxStatus.GetLinux().GetNamespaces().GetOptions().GetNetwork() != networkNamespaceForPod(pod) {
-		klog.V(2).InfoS("Sandbox for pod has changed. Need to start a new one", "pod", klog.KObj(pod))
-		return true, sandboxStatus.Metadata.Attempt + 1, ""
-	}
-
-	// Needs to create a new sandbox when the sandbox does not have an IP address.
-	if !kubecontainer.IsHostNetworkPod(pod) && sandboxStatus.Network.Ip == "" {
-		klog.V(2).InfoS("Sandbox for pod has no IP address. Need to start a new one", "pod", klog.KObj(pod))
-		return true, sandboxStatus.Metadata.Attempt + 1, sandboxStatus.Id
-	}
-
-	return false, sandboxStatus.Metadata.Attempt, sandboxStatus.Id
-}
-
 func containerChanged(container *v1.Container, containerStatus *kubecontainer.Status) (uint64, uint64, bool) {
 	expectedHash := kubecontainer.HashContainer(container)
 	return expectedHash, containerStatus.Hash, containerStatus.Hash != expectedHash
@@ -525,7 +484,7 @@ func containerSucceeded(c *v1.Container, podStatus *kubecontainer.PodStatus) boo
 func (m *kubeGenericRuntimeManager) computePodActions(pod *v1.Pod, podStatus *kubecontainer.PodStatus) podActions {
 	klog.V(5).InfoS("Syncing Pod", "pod", klog.KObj(pod))
 
-	createPodSandbox, attempt, sandboxID := m.podSandboxChanged(pod, podStatus)
+	createPodSandbox, attempt, sandboxID := runtimeutil.PodSandboxChanged(pod, podStatus)
 	changes := podActions{
 		KillPod:           createPodSandbox,
 		CreateSandbox:     createPodSandbox,
@@ -578,14 +537,12 @@ func (m *kubeGenericRuntimeManager) computePodActions(pod *v1.Pod, podStatus *ku
 	}
 
 	// Ephemeral containers may be started even if initialization is not yet complete.
-	if utilfeature.DefaultFeatureGate.Enabled(features.EphemeralContainers) {
-		for i := range pod.Spec.EphemeralContainers {
-			c := (*v1.Container)(&pod.Spec.EphemeralContainers[i].EphemeralContainerCommon)
+	for i := range pod.Spec.EphemeralContainers {
+		c := (*v1.Container)(&pod.Spec.EphemeralContainers[i].EphemeralContainerCommon)
 
-			// Ephemeral Containers are never restarted
-			if podStatus.FindContainerStatusByName(c.Name) == nil {
-				changes.EphemeralContainersToStart = append(changes.EphemeralContainersToStart, i)
-			}
+		// Ephemeral Containers are never restarted
+		if podStatus.FindContainerStatusByName(c.Name) == nil {
+			changes.EphemeralContainersToStart = append(changes.EphemeralContainersToStart, i)
 		}
 	}
 
@@ -822,7 +779,7 @@ func (m *kubeGenericRuntimeManager) SyncPod(pod *v1.Pod, podStatus *kubecontaine
 		}
 		klog.V(4).InfoS("Created PodSandbox for pod", "podSandboxID", podSandboxID, "pod", klog.KObj(pod))
 
-		podSandboxStatus, err := m.runtimeService.PodSandboxStatus(podSandboxID)
+		resp, err := m.runtimeService.PodSandboxStatus(podSandboxID, false)
 		if err != nil {
 			ref, referr := ref.GetReference(legacyscheme.Scheme, pod)
 			if referr != nil {
@@ -833,12 +790,16 @@ func (m *kubeGenericRuntimeManager) SyncPod(pod *v1.Pod, podStatus *kubecontaine
 			result.Fail(err)
 			return
 		}
+		if resp.GetStatus() == nil {
+			result.Fail(errors.New("pod sandbox status is nil"))
+			return
+		}
 
 		// If we ever allow updating a pod from non-host-network to
 		// host-network, we may use a stale IP.
 		if !kubecontainer.IsHostNetworkPod(pod) {
 			// Overwrite the podIPs passed in the pod status, since we just started the pod sandbox.
-			podIPs = m.determinePodSandboxIPs(pod.Namespace, pod.Name, podSandboxStatus)
+			podIPs = m.determinePodSandboxIPs(pod.Namespace, pod.Name, resp.GetStatus())
 			klog.V(4).InfoS("Determined the ip for pod after sandbox changed", "IPs", podIPs, "pod", klog.KObj(pod))
 		}
 	}
@@ -910,10 +871,8 @@ func (m *kubeGenericRuntimeManager) SyncPod(pod *v1.Pod, podStatus *kubecontaine
 	// These are started "prior" to init containers to allow running ephemeral containers even when there
 	// are errors starting an init container. In practice init containers will start first since ephemeral
 	// containers cannot be specified on pod creation.
-	if utilfeature.DefaultFeatureGate.Enabled(features.EphemeralContainers) {
-		for _, idx := range podContainerChanges.EphemeralContainersToStart {
-			start("ephemeral container", metrics.EphemeralContainer, ephemeralContainerStartSpec(&pod.Spec.EphemeralContainers[idx]))
-		}
+	for _, idx := range podContainerChanges.EphemeralContainersToStart {
+		start("ephemeral container", metrics.EphemeralContainer, ephemeralContainerStartSpec(&pod.Spec.EphemeralContainers[idx]))
 	}
 
 	// Step 6: start the init container.
@@ -990,7 +949,7 @@ func (m *kubeGenericRuntimeManager) killPodWithSyncResult(pod *v1.Pod, runningPo
 	result.AddSyncResult(killSandboxResult)
 	// Stop all sandboxes belongs to same pod
 	for _, podSandbox := range runningPod.Sandboxes {
-		if err := m.runtimeService.StopPodSandbox(podSandbox.ID.ID); err != nil {
+		if err := m.runtimeService.StopPodSandbox(podSandbox.ID.ID); err != nil && !crierror.IsNotFound(err) {
 			killSandboxResult.Fail(kubecontainer.ErrKillPodSandbox, err.Error())
 			klog.ErrorS(nil, "Failed to stop sandbox", "podSandboxID", podSandbox.ID)
 		}
@@ -1032,19 +991,29 @@ func (m *kubeGenericRuntimeManager) GetPodStatus(uid kubetypes.UID, name, namesp
 
 	klog.V(4).InfoS("getSandboxIDByPodUID got sandbox IDs for pod", "podSandboxID", podSandboxIDs, "pod", klog.KObj(pod))
 
-	sandboxStatuses := make([]*runtimeapi.PodSandboxStatus, len(podSandboxIDs))
+	sandboxStatuses := []*runtimeapi.PodSandboxStatus{}
 	podIPs := []string{}
 	for idx, podSandboxID := range podSandboxIDs {
-		podSandboxStatus, err := m.runtimeService.PodSandboxStatus(podSandboxID)
+		resp, err := m.runtimeService.PodSandboxStatus(podSandboxID, false)
+		// Between List (getSandboxIDByPodUID) and check (PodSandboxStatus) another thread might remove a container, and that is normal.
+		// The previous call (getSandboxIDByPodUID) never fails due to a pod sandbox not existing.
+		// Therefore, this method should not either, but instead act as if the previous call failed,
+		// which means the error should be ignored.
+		if crierror.IsNotFound(err) {
+			continue
+		}
 		if err != nil {
 			klog.ErrorS(err, "PodSandboxStatus of sandbox for pod", "podSandboxID", podSandboxID, "pod", klog.KObj(pod))
 			return nil, err
 		}
-		sandboxStatuses[idx] = podSandboxStatus
+		if resp.GetStatus() == nil {
+			return nil, errors.New("pod sandbox status is nil")
 
+		}
+		sandboxStatuses = append(sandboxStatuses, resp.Status)
 		// Only get pod IP from latest sandbox
-		if idx == 0 && podSandboxStatus.State == runtimeapi.PodSandboxState_SANDBOX_READY {
-			podIPs = m.determinePodSandboxIPs(namespace, name, podSandboxStatus)
+		if idx == 0 && resp.Status.State == runtimeapi.PodSandboxState_SANDBOX_READY {
+			podIPs = m.determinePodSandboxIPs(namespace, name, resp.Status)
 		}
 	}
 
@@ -1085,4 +1054,8 @@ func (m *kubeGenericRuntimeManager) UpdatePodCIDR(podCIDR string) error {
 				PodCidr: podCIDR,
 			},
 		})
+}
+
+func (m *kubeGenericRuntimeManager) CheckpointContainer(options *runtimeapi.CheckpointContainerRequest) error {
+	return m.runtimeService.CheckpointContainer(options)
 }

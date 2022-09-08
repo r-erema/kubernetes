@@ -26,9 +26,6 @@ import (
 	"strings"
 	"time"
 
-	utilfeature "k8s.io/apiserver/pkg/util/feature"
-	"k8s.io/klog/v2"
-
 	v1 "k8s.io/api/core/v1"
 	storage "k8s.io/api/storage/v1"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
@@ -36,9 +33,12 @@ import (
 	"k8s.io/apimachinery/pkg/types"
 	"k8s.io/apimachinery/pkg/util/wait"
 	"k8s.io/apimachinery/pkg/watch"
+	utilfeature "k8s.io/apiserver/pkg/util/feature"
 	"k8s.io/client-go/kubernetes"
+	"k8s.io/klog/v2"
 	"k8s.io/kubernetes/pkg/features"
 	"k8s.io/kubernetes/pkg/volume"
+	"k8s.io/kubernetes/pkg/volume/util"
 	volumetypes "k8s.io/kubernetes/pkg/volume/util/types"
 	"k8s.io/utils/clock"
 )
@@ -66,6 +66,11 @@ var _ volume.Detacher = &csiAttacher{}
 var _ volume.DeviceMounter = &csiAttacher{}
 
 func (c *csiAttacher) Attach(spec *volume.Spec, nodeName types.NodeName) (string, error) {
+	_, ok := c.plugin.host.(volume.KubeletVolumeHost)
+	if ok {
+		return "", errors.New("attaching volumes from the kubelet is not supported")
+	}
+
 	if spec == nil {
 		klog.Error(log("attacher.Attach missing volume.Spec"))
 		return "", errors.New("missing spec")
@@ -128,7 +133,7 @@ func (c *csiAttacher) Attach(spec *volume.Spec, nodeName types.NodeName) (string
 
 	// Attach and detach functionality is exclusive to the CSI plugin that runs in the AttachDetachController,
 	// and has access to a VolumeAttachment lister that can be polled for the current status.
-	if err := c.waitForVolumeAttachmentWithLister(pvSrc.VolumeHandle, attachID, c.watchTimeout); err != nil {
+	if err := c.waitForVolumeAttachmentWithLister(spec, pvSrc.VolumeHandle, attachID, c.watchTimeout); err != nil {
 		return "", err
 	}
 
@@ -173,7 +178,7 @@ func (c *csiAttacher) waitForVolumeAttachmentInternal(volumeHandle, attachID str
 	return attach.Name, nil
 }
 
-func (c *csiAttacher) waitForVolumeAttachmentWithLister(volumeHandle, attachID string, timeout time.Duration) error {
+func (c *csiAttacher) waitForVolumeAttachmentWithLister(spec *volume.Spec, volumeHandle, attachID string, timeout time.Duration) error {
 	klog.V(4).Info(log("probing VolumeAttachment [id=%v]", attachID))
 
 	verifyStatus := func() (bool, error) {
@@ -196,7 +201,7 @@ func (c *csiAttacher) waitForVolumeAttachmentWithLister(volumeHandle, attachID s
 		return successful, nil
 	}
 
-	return c.waitForVolumeAttachDetachStatusWithLister(volumeHandle, attachID, timeout, verifyStatus, "Attach")
+	return c.waitForVolumeAttachDetachStatusWithLister(spec, volumeHandle, attachID, timeout, verifyStatus, "Attach")
 }
 
 func (c *csiAttacher) VolumesAreAttached(specs []*volume.Spec, nodeName types.NodeName) (map[*volume.Spec]bool, error) {
@@ -326,8 +331,9 @@ func (c *csiAttacher) MountDevice(spec *volume.Spec, devicePath string, deviceMo
 	klog.V(4).Info(log("created target path successfully [%s]", deviceMountPath))
 	dataDir := filepath.Dir(deviceMountPath)
 	data := map[string]string{
-		volDataKey.volHandle:  csiSource.VolumeHandle,
-		volDataKey.driverName: csiSource.Driver,
+		volDataKey.volHandle:           csiSource.VolumeHandle,
+		volDataKey.driverName:          csiSource.Driver,
+		volDataKey.seLinuxMountContext: deviceMounterArgs.SELinuxLabel,
 	}
 
 	err = saveVolumeData(dataDir, volDataFileName, data)
@@ -364,6 +370,16 @@ func (c *csiAttacher) MountDevice(spec *volume.Spec, devicePath string, deviceMo
 	var mountOptions []string
 	if spec.PersistentVolume != nil && spec.PersistentVolume.Spec.MountOptions != nil {
 		mountOptions = spec.PersistentVolume.Spec.MountOptions
+	}
+
+	if utilfeature.DefaultFeatureGate.Enabled(features.SELinuxMountReadWriteOncePod) {
+		support, err := c.plugin.SupportsSELinuxContextMount(spec)
+		if err != nil {
+			return errors.New(log("failed to query for SELinuxMount support: %s", err))
+		}
+		if support {
+			mountOptions = util.AddSELinuxMountOption(mountOptions, deviceMounterArgs.SELinuxLabel)
+		}
 	}
 
 	var nodeStageFSGroupArg *int64
@@ -404,6 +420,11 @@ var _ volume.Detacher = &csiAttacher{}
 var _ volume.DeviceUnmounter = &csiAttacher{}
 
 func (c *csiAttacher) Detach(volumeName string, nodeName types.NodeName) error {
+	_, ok := c.plugin.host.(volume.KubeletVolumeHost)
+	if ok {
+		return errors.New("detaching volumes from the kubelet is not supported")
+	}
+
 	var attachID string
 	var volID string
 
@@ -463,10 +484,10 @@ func (c *csiAttacher) waitForVolumeDetachmentWithLister(volumeHandle, attachID s
 		return successful, nil
 	}
 
-	return c.waitForVolumeAttachDetachStatusWithLister(volumeHandle, attachID, timeout, verifyStatus, "Detach")
+	return c.waitForVolumeAttachDetachStatusWithLister(nil, volumeHandle, attachID, timeout, verifyStatus, "Detach")
 }
 
-func (c *csiAttacher) waitForVolumeAttachDetachStatusWithLister(volumeHandle, attachID string, timeout time.Duration, verifyStatus func() (bool, error), operation string) error {
+func (c *csiAttacher) waitForVolumeAttachDetachStatusWithLister(spec *volume.Spec, volumeHandle, attachID string, timeout time.Duration, verifyStatus func() (bool, error), operation string) error {
 	var (
 		initBackoff = 500 * time.Millisecond
 		// This is approximately the duration between consecutive ticks after two minutes (CSI timeout).
@@ -480,6 +501,13 @@ func (c *csiAttacher) waitForVolumeAttachDetachStatusWithLister(volumeHandle, at
 
 	ctx, cancel := context.WithTimeout(context.Background(), timeout)
 	defer cancel()
+
+	// Get driver name from spec for better log messages. During detach spec can be nil, and it's ok for driver to be unknown.
+	csiDriverName, err := GetCSIDriverName(spec)
+	if err != nil {
+		csiDriverName = "unknown"
+		klog.V(4).Info(log("Could not find CSI driver name in spec for volume [%v]", volumeHandle))
+	}
 
 	for {
 		t := backoffMgr.Backoff()
@@ -495,7 +523,7 @@ func (c *csiAttacher) waitForVolumeAttachDetachStatusWithLister(volumeHandle, at
 		case <-ctx.Done():
 			t.Stop()
 			klog.Error(log("%s timeout after %v [volume=%v; attachment.ID=%v]", operation, timeout, volumeHandle, attachID))
-			return fmt.Errorf("%s timeout for volume %v", operation, volumeHandle)
+			return fmt.Errorf("timed out waiting for external-attacher of %v CSI driver to %v volume %v", csiDriverName, strings.ToLower(operation), volumeHandle)
 		}
 	}
 }

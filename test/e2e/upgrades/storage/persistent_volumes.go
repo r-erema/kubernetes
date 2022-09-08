@@ -25,7 +25,7 @@ import (
 	e2eskipper "k8s.io/kubernetes/test/e2e/framework/skipper"
 	"k8s.io/kubernetes/test/e2e/upgrades"
 
-	"github.com/onsi/ginkgo"
+	"github.com/onsi/ginkgo/v2"
 )
 
 // PersistentVolumeUpgradeTest test that a pv is available before and after a cluster upgrade.
@@ -47,7 +47,7 @@ const (
 func (t *PersistentVolumeUpgradeTest) Setup(f *framework.Framework) {
 
 	var err error
-	e2eskipper.SkipUnlessProviderIs("gce", "gke", "openstack", "aws", "vsphere", "azure")
+	e2eskipper.SkipUnlessProviderIs("gce", "gke", "aws", "vsphere", "azure")
 
 	ns := f.Namespace.Name
 

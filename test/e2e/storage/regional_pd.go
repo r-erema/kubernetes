@@ -19,7 +19,7 @@ package storage
 import (
 	"context"
 
-	"github.com/onsi/ginkgo"
+	"github.com/onsi/ginkgo/v2"
 	"github.com/onsi/gomega"
 
 	"fmt"
@@ -48,6 +48,7 @@ import (
 	"k8s.io/kubernetes/test/e2e/storage/testsuites"
 	"k8s.io/kubernetes/test/e2e/storage/utils"
 	imageutils "k8s.io/kubernetes/test/utils/image"
+	admissionapi "k8s.io/pod-security-admission/api"
 )
 
 const (
@@ -60,6 +61,7 @@ const (
 
 var _ = utils.SIGDescribe("Regional PD", func() {
 	f := framework.NewDefaultFramework("regional-pd")
+	f.NamespacePodSecurityEnforceLevel = admissionapi.LevelPrivileged
 
 	// filled in BeforeEach
 	var c clientset.Interface
@@ -227,7 +229,9 @@ func testZonalFailover(c clientset.Interface, ns string) {
 	err = waitForStatefulSetReplicasReady(statefulSet.Name, ns, c, framework.Poll, statefulSetReadyTimeout)
 	if err != nil {
 		pod := getPod(c, ns, regionalPDLabels)
-		framework.ExpectEqual(podutil.IsPodReadyConditionTrue(pod.Status), true, "The statefulset pod has the following conditions: %s", pod.Status.Conditions)
+		if !podutil.IsPodReadyConditionTrue(pod.Status) {
+			framework.Failf("The statefulset pod %s was expected to be ready, instead has the following conditions: %v", pod.Name, pod.Status.Conditions)
+		}
 		framework.ExpectNoError(err)
 	}
 
@@ -277,7 +281,9 @@ func testZonalFailover(c clientset.Interface, ns string) {
 	err = waitForStatefulSetReplicasReady(statefulSet.Name, ns, c, 3*time.Second, framework.RestartPodReadyAgainTimeout)
 	if err != nil {
 		pod := getPod(c, ns, regionalPDLabels)
-		framework.ExpectEqual(podutil.IsPodReadyConditionTrue(pod.Status), true, "The statefulset pod has the following conditions: %s", pod.Status.Conditions)
+		if !podutil.IsPodReadyConditionTrue(pod.Status) {
+			framework.Failf("The statefulset pod %s was expected to be ready, instead has the following conditions: %v", pod.Name, pod.Status.Conditions)
+		}
 		framework.ExpectNoError(err)
 	}
 

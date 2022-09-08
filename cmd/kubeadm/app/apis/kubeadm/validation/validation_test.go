@@ -17,8 +17,8 @@ limitations under the License.
 package validation
 
 import (
-	"io/ioutil"
 	"os"
+	"strings"
 	"testing"
 
 	"github.com/spf13/pflag"
@@ -181,6 +181,34 @@ func TestValidateIPFromString(t *testing.T) {
 				(len(actual) == 0),
 			)
 		}
+	}
+}
+
+func TestValidatePort(t *testing.T) {
+	var tests = []struct {
+		name        string
+		port        int32
+		expectedErr bool
+	}{
+		{"negative number port", -1234, true},
+		{"zero number port", 0, true},
+		{"minimum valid value port", 1, false},
+		{"valid value port", 300, false},
+		{"maximum valid value port", 65535, false},
+		{"if port greater than 65535", 65538, true},
+	}
+	for _, rt := range tests {
+		t.Run(rt.name, func(t *testing.T) {
+			allErrs := ValidatePort(rt.port, nil)
+			if len(allErrs) > 0 {
+				find := strings.Contains(allErrs[0].Error(), "port number is not valid")
+				if find != rt.expectedErr {
+					t.Errorf(
+						"test case failed :\n\t   err(s): %v\n\t", allErrs[0].Error(),
+					)
+				}
+			}
+		})
 	}
 }
 
@@ -425,7 +453,7 @@ func TestValidateAPIEndpoint(t *testing.T) {
 	}
 }
 
-//TODO: Create a separated test for ValidateClusterConfiguration
+// TODO: Create a separated test for ValidateClusterConfiguration
 func TestValidateInitConfiguration(t *testing.T) {
 	nodename := "valid-nodename"
 	var tests = []struct {
@@ -926,7 +954,7 @@ func TestValidateDiscoveryTokenAPIServer(t *testing.T) {
 }
 
 func TestValidateDiscoveryKubeConfigPath(t *testing.T) {
-	tmpfile, err := ioutil.TempFile("/tmp", "test_discovery_file")
+	tmpfile, err := os.CreateTemp("/tmp", "test_discovery_file")
 	if err != nil {
 		t.Errorf("Error creating temporary file: %v", err)
 	}

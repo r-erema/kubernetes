@@ -23,9 +23,9 @@ import (
 	"strings"
 	"time"
 
+	jsonpatch "github.com/evanphx/json-patch"
 	kjson "sigs.k8s.io/json"
 
-	jsonpatch "github.com/evanphx/json-patch"
 	"k8s.io/apimachinery/pkg/api/errors"
 	"k8s.io/apimachinery/pkg/api/meta"
 	metainternalversionscheme "k8s.io/apimachinery/pkg/apis/meta/internalversion/scheme"
@@ -45,12 +45,11 @@ import (
 	"k8s.io/apiserver/pkg/authorization/authorizer"
 	"k8s.io/apiserver/pkg/endpoints/handlers/fieldmanager"
 	"k8s.io/apiserver/pkg/endpoints/handlers/finisher"
+	requestmetrics "k8s.io/apiserver/pkg/endpoints/handlers/metrics"
 	"k8s.io/apiserver/pkg/endpoints/handlers/negotiation"
 	"k8s.io/apiserver/pkg/endpoints/request"
-	"k8s.io/apiserver/pkg/features"
 	"k8s.io/apiserver/pkg/registry/rest"
 	"k8s.io/apiserver/pkg/util/dryrun"
-	utilfeature "k8s.io/apiserver/pkg/util/feature"
 	utiltrace "k8s.io/utils/trace"
 )
 
@@ -65,11 +64,6 @@ func PatchResource(r rest.Patcher, scope *RequestScope, admit admission.Interfac
 		// For performance tracking purposes.
 		trace := utiltrace.New("Patch", traceFields(req)...)
 		defer trace.LogIfLong(500 * time.Millisecond)
-
-		if isDryRun(req.URL) && !utilfeature.DefaultFeatureGate.Enabled(features.DryRun) {
-			scope.err(errors.NewBadRequest("the dryRun feature is disabled"), w, req)
-			return
-		}
 
 		// Do this first, otherwise name extraction can fail for unrecognized content types
 		// TODO: handle this in negotiation
@@ -105,7 +99,8 @@ func PatchResource(r rest.Patcher, scope *RequestScope, admit admission.Interfac
 			return
 		}
 
-		patchBytes, err := limitedReadBody(req, scope.MaxRequestBodyBytes)
+		patchBytes, err := limitedReadBodyWithRecordMetric(ctx, req, scope.MaxRequestBodyBytes, scope.Resource.GroupResource().String(), requestmetrics.Patch)
+		trace.Step("limitedReadBody done", utiltrace.Field{"len", len(patchBytes)}, utiltrace.Field{"err", err})
 		if err != nil {
 			scope.err(err, w, req)
 			return
@@ -124,8 +119,7 @@ func PatchResource(r rest.Patcher, scope *RequestScope, admit admission.Interfac
 		}
 		options.TypeMeta.SetGroupVersionKind(metav1.SchemeGroupVersion.WithKind("PatchOptions"))
 
-		ae := audit.AuditEventFrom(ctx)
-		admit = admission.WithAudit(admit, ae)
+		admit = admission.WithAudit(admit)
 
 		audit.LogRequestPatch(req.Context(), patchBytes)
 		trace.Step("Recorded the audit event")
@@ -235,12 +229,6 @@ func PatchResource(r rest.Patcher, scope *RequestScope, admit admission.Interfac
 			return
 		}
 		trace.Step("Object stored in database")
-
-		if err := setObjectSelfLink(ctx, result, req, scope.Namer); err != nil {
-			scope.err(err, w, req)
-			return
-		}
-		trace.Step("Self-link added")
 
 		status := http.StatusOK
 		if wasCreated {
@@ -513,11 +501,11 @@ func (p *applyPatcher) createNewObject(requestContext context.Context) (runtime.
 	return p.applyPatchToCurrentObject(requestContext, obj)
 }
 
-// strategicPatchObject applies a strategic merge patch of <patchBytes> to
-// <originalObject> and stores the result in <objToUpdate>.
+// strategicPatchObject applies a strategic merge patch of `patchBytes` to
+// `originalObject` and stores the result in `objToUpdate`.
 // It additionally returns the map[string]interface{} representation of the
-// <originalObject> and <patchBytes>.
-// NOTE: Both <originalObject> and <objToUpdate> are supposed to be versioned.
+// `originalObject` and `patchBytes`.
+// NOTE: Both `originalObject` and `objToUpdate` are supposed to be versioned.
 func strategicPatchObject(
 	requestContext context.Context,
 	defaulter runtime.ObjectDefaulter,
@@ -580,6 +568,14 @@ func (p *patcher) applyPatch(ctx context.Context, _, currentObject runtime.Objec
 			return nil, err
 		}
 		return nil, errors.NewConflict(p.resource.GroupResource(), p.name, fmt.Errorf("uid mismatch: the provided object specified uid %s, and no existing object was found", accessor.GetUID()))
+	}
+
+	// if this object supports namespace info
+	if objectMeta, err := meta.Accessor(objToUpdate); err == nil {
+		// ensure namespace on the object is correct, or error if a conflicting namespace was set in the object
+		if err := rest.EnsureObjectNamespaceMatchesRequestNamespace(rest.ExpectedNamespaceForResource(p.namespace, p.resource), objectMeta); err != nil {
+			return nil, err
+		}
 	}
 
 	if err := checkName(objToUpdate, p.name, p.namespace, p.namer); err != nil {
@@ -657,8 +653,13 @@ func (p *patcher) patchResource(ctx context.Context, scope *RequestScope) (runti
 		return obj, nil
 	}
 
+	transformers := []rest.TransformFunc{p.applyPatch, p.applyAdmission, dedupOwnerReferencesTransformer}
+	if scope.FieldManager != nil {
+		transformers = append(transformers, fieldmanager.IgnoreManagedFieldsTimestampsTransformer)
+	}
+
 	wasCreated := false
-	p.updatedObjectInfo = rest.DefaultUpdatedObjectInfo(nil, p.applyPatch, p.applyAdmission, dedupOwnerReferencesTransformer)
+	p.updatedObjectInfo = rest.DefaultUpdatedObjectInfo(nil, transformers...)
 	requestFunc := func() (runtime.Object, error) {
 		// Pass in UpdateOptions to override UpdateStrategy.AllowUpdateOnCreate
 		options := patchToUpdateOptions(p.options)

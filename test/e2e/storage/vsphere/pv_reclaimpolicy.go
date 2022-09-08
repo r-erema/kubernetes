@@ -21,7 +21,7 @@ import (
 	"strconv"
 	"time"
 
-	"github.com/onsi/ginkgo"
+	"github.com/onsi/ginkgo/v2"
 	v1 "k8s.io/api/core/v1"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
@@ -31,10 +31,12 @@ import (
 	e2epv "k8s.io/kubernetes/test/e2e/framework/pv"
 	e2eskipper "k8s.io/kubernetes/test/e2e/framework/skipper"
 	"k8s.io/kubernetes/test/e2e/storage/utils"
+	admissionapi "k8s.io/pod-security-admission/api"
 )
 
 var _ = utils.SIGDescribe("PersistentVolumes [Feature:vsphere][Feature:ReclaimPolicy]", func() {
 	f := framework.NewDefaultFramework("persistentvolumereclaim")
+	f.NamespacePodSecurityEnforceLevel = admissionapi.LevelPrivileged
 	var (
 		c          clientset.Interface
 		ns         string
@@ -129,7 +131,9 @@ var _ = utils.SIGDescribe("PersistentVolumes [Feature:vsphere][Feature:ReclaimPo
 			ginkgo.By("Verify the volume is attached to the node")
 			isVolumeAttached, verifyDiskAttachedError := diskIsAttached(pv.Spec.VsphereVolume.VolumePath, pod.Spec.NodeName)
 			framework.ExpectNoError(verifyDiskAttachedError)
-			framework.ExpectEqual(isVolumeAttached, true)
+			if !isVolumeAttached {
+				framework.Failf("Disk %s is not attached with the node %s", pv.Spec.VsphereVolume.VolumePath, pod.Spec.NodeName)
+			}
 
 			ginkgo.By("Verify the volume is accessible and available in the pod")
 			verifyVSphereVolumesAccessible(c, pod, []*v1.PersistentVolume{pv})

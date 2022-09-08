@@ -28,7 +28,7 @@ import "k8s.io/apimachinery/pkg/runtime/schema/generated.proto";
 import "k8s.io/apimachinery/pkg/util/intstr/generated.proto";
 
 // Package-wide variables from generator "generated".
-option go_package = "v1";
+option go_package = "k8s.io/api/core/v1";
 
 // Represents a Persistent Disk resource in AWS.
 //
@@ -220,11 +220,20 @@ message CSIPersistentVolumeSource {
   // controllerExpandSecretRef is a reference to the secret object containing
   // sensitive information to pass to the CSI driver to complete the CSI
   // ControllerExpandVolume call.
-  // This is an alpha field and requires enabling ExpandCSIVolumes feature gate.
+  // This is an beta field and requires enabling ExpandCSIVolumes feature gate.
   // This field is optional, and may be empty if no secret is required. If the
   // secret object contains more than one secret, all secrets are passed.
   // +optional
   optional SecretReference controllerExpandSecretRef = 9;
+
+  // nodeExpandSecretRef is a reference to the secret object containing
+  // sensitive information to pass to the CSI driver to complete the CSI
+  // NodeExpandVolume call.
+  // This is an alpha field and requires enabling CSINodeExpandSecret feature gate.
+  // This field is optional, may be omitted if no secret is required. If the
+  // secret object contains more than one secret, all secrets are passed.
+  // +optional
+  optional SecretReference nodeExpandSecretRef = 10;
 }
 
 // Represents a source location of a volume to mount, managed by an external CSI driver
@@ -611,7 +620,7 @@ message Container {
   // Cannot be updated.
   optional string name = 1;
 
-  // Docker image name.
+  // Container image name.
   // More info: https://kubernetes.io/docs/concepts/containers/images
   // This field is optional to allow higher level config management to default or override
   // container images in workload controllers like Deployments and StatefulSets.
@@ -619,7 +628,7 @@ message Container {
   optional string image = 2;
 
   // Entrypoint array. Not executed within a shell.
-  // The docker image's ENTRYPOINT is used if this is not provided.
+  // The container image's ENTRYPOINT is used if this is not provided.
   // Variable references $(VAR_NAME) are expanded using the container's environment. If a variable
   // cannot be resolved, the reference in the input string will be unchanged. Double $$ are reduced
   // to a single $, which allows for escaping the $(VAR_NAME) syntax: i.e. "$$(VAR_NAME)" will
@@ -630,7 +639,7 @@ message Container {
   repeated string command = 3;
 
   // Arguments to the entrypoint.
-  // The docker image's CMD is used if this is not provided.
+  // The container image's CMD is used if this is not provided.
   // Variable references $(VAR_NAME) are expanded using the container's environment. If a variable
   // cannot be resolved, the reference in the input string will be unchanged. Double $$ are reduced
   // to a single $, which allows for escaping the $(VAR_NAME) syntax: i.e. "$$(VAR_NAME)" will
@@ -647,12 +656,12 @@ message Container {
   // +optional
   optional string workingDir = 5;
 
-  // List of ports to expose from the container. Exposing a port here gives
-  // the system additional information about the network connections a
-  // container uses, but is primarily informational. Not specifying a port here
+  // List of ports to expose from the container. Not specifying a port here
   // DOES NOT prevent that port from being exposed. Any port which is
   // listening on the default "0.0.0.0" address inside a container will be
   // accessible from the network.
+  // Modifying this array with strategic merge patch may corrupt the data.
+  // For more information See https://github.com/kubernetes/kubernetes/issues/108255.
   // Cannot be updated.
   // +optional
   // +patchMergeKey=containerPort
@@ -785,7 +794,7 @@ message Container {
 // Describe a container image
 message ContainerImage {
   // Names by which this image is known.
-  // e.g. ["k8s.gcr.io/hyperkube:v1.0.7", "dockerhub.io/google_containers/hyperkube:v1.0.7"]
+  // e.g. ["kubernetes.example/hyperkube:v1.0.7", "cloud-vendor.registry.example/cloud-vendor/hyperkube:v1.0.7"]
   // +optional
   repeated string names = 1;
 
@@ -873,7 +882,7 @@ message ContainerStateTerminated {
   // +optional
   optional k8s.io.apimachinery.pkg.apis.meta.v1.Time finishedAt = 6;
 
-  // Container's ID in the format 'docker://<container_id>'
+  // Container's ID in the format '<type>://<container_id>'
   // +optional
   optional string containerID = 7;
 }
@@ -916,7 +925,7 @@ message ContainerStatus {
   // ImageID of the container's image.
   optional string imageID = 7;
 
-  // Container's ID in the format 'docker://<container_id>'.
+  // Container's ID in the format '<type>://<container_id>'.
   // +optional
   optional string containerID = 8;
 
@@ -1062,13 +1071,16 @@ message EndpointPort {
 // EndpointSubset is a group of addresses with a common set of ports. The
 // expanded set of endpoints is the Cartesian product of Addresses x Ports.
 // For example, given:
-//   {
-//     Addresses: [{"ip": "10.10.1.1"}, {"ip": "10.10.2.2"}],
-//     Ports:     [{"name": "a", "port": 8675}, {"name": "b", "port": 309}]
-//   }
+//
+// 	{
+// 	  Addresses: [{"ip": "10.10.1.1"}, {"ip": "10.10.2.2"}],
+// 	  Ports:     [{"name": "a", "port": 8675}, {"name": "b", "port": 309}]
+// 	}
+//
 // The resulting set of endpoints can be viewed as:
-//     a: [ 10.10.1.1:8675, 10.10.2.2:8675 ],
-//     b: [ 10.10.1.1:309, 10.10.2.2:309 ]
+//
+// 	a: [ 10.10.1.1:8675, 10.10.2.2:8675 ],
+// 	b: [ 10.10.1.1:309, 10.10.2.2:309 ]
 message EndpointSubset {
   // IP addresses which offer the related ports that are marked as ready. These endpoints
   // should be considered safe for load balancers and clients to utilize.
@@ -1087,17 +1099,18 @@ message EndpointSubset {
 }
 
 // Endpoints is a collection of endpoints that implement the actual service. Example:
-//   Name: "mysvc",
-//   Subsets: [
-//     {
-//       Addresses: [{"ip": "10.10.1.1"}, {"ip": "10.10.2.2"}],
-//       Ports: [{"name": "a", "port": 8675}, {"name": "b", "port": 309}]
-//     },
-//     {
-//       Addresses: [{"ip": "10.10.3.3"}],
-//       Ports: [{"name": "a", "port": 93}, {"name": "b", "port": 76}]
-//     },
-//  ]
+//
+// 	 Name: "mysvc",
+// 	 Subsets: [
+// 	   {
+// 	     Addresses: [{"ip": "10.10.1.1"}, {"ip": "10.10.2.2"}],
+// 	     Ports: [{"name": "a", "port": 8675}, {"name": "b", "port": 309}]
+// 	   },
+// 	   {
+// 	     Addresses: [{"ip": "10.10.3.3"}],
+// 	     Ports: [{"name": "a", "port": 93}, {"name": "b", "port": 76}]
+// 	   },
+// 	]
 message Endpoints {
   // Standard object's metadata.
   // More info: https://git.k8s.io/community/contributors/devel/sig-architecture/api-conventions.md#metadata
@@ -1192,8 +1205,6 @@ message EnvVarSource {
 //
 // To add an ephemeral container, use the ephemeralcontainers subresource of an existing
 // Pod. Ephemeral containers may not be removed or restarted.
-//
-// This is a beta feature available on clusters that haven't disabled the EphemeralContainers feature gate.
 message EphemeralContainer {
   // Ephemeral containers have all of the fields of Container, plus additional fields
   // specific to ephemeral containers. Fields in common with Container are in the
@@ -1220,12 +1231,12 @@ message EphemeralContainerCommon {
   // This name must be unique among all containers, init containers and ephemeral containers.
   optional string name = 1;
 
-  // Docker image name.
+  // Container image name.
   // More info: https://kubernetes.io/docs/concepts/containers/images
   optional string image = 2;
 
   // Entrypoint array. Not executed within a shell.
-  // The docker image's ENTRYPOINT is used if this is not provided.
+  // The image's ENTRYPOINT is used if this is not provided.
   // Variable references $(VAR_NAME) are expanded using the container's environment. If a variable
   // cannot be resolved, the reference in the input string will be unchanged. Double $$ are reduced
   // to a single $, which allows for escaping the $(VAR_NAME) syntax: i.e. "$$(VAR_NAME)" will
@@ -1236,7 +1247,7 @@ message EphemeralContainerCommon {
   repeated string command = 3;
 
   // Arguments to the entrypoint.
-  // The docker image's CMD is used if this is not provided.
+  // The image's CMD is used if this is not provided.
   // Variable references $(VAR_NAME) are expanded using the container's environment. If a variable
   // cannot be resolved, the reference in the input string will be unchanged. Double $$ are reduced
   // to a single $, which allows for escaping the $(VAR_NAME) syntax: i.e. "$$(VAR_NAME)" will
@@ -2402,9 +2413,7 @@ message NodeSpec {
   // +optional
   repeated Taint taints = 5;
 
-  // Deprecated. If specified, the source of the node's configuration.
-  // The DynamicKubeletConfig feature gate must be enabled for the Kubelet to use this field.
-  // This field is deprecated as of 1.22: https://git.k8s.io/enhancements/keps/sig-node/281-dynamic-kubelet-configuration
+  // Deprecated: Previously used to specify the source of the node's configuration for the DynamicKubeletConfig feature. This feature is removed from Kubelets as of 1.24 and will be fully removed in 1.26.
   // +optional
   optional NodeConfigSource configSource = 6;
 
@@ -2497,7 +2506,7 @@ message NodeSystemInfo {
   // OS Image reported by the node from /etc/os-release (e.g. Debian GNU/Linux 7 (wheezy)).
   optional string osImage = 5;
 
-  // ContainerRuntime Version reported by the node through runtime remote API (e.g. docker://1.5.0).
+  // ContainerRuntime Version reported by the node through runtime remote API (e.g. containerd://1.4.2).
   optional string containerRuntimeVersion = 6;
 
   // Kubelet Version reported by the node.
@@ -2537,6 +2546,7 @@ message ObjectFieldSelector {
 //     and the version of the actual struct is irrelevant.
 //  5. We cannot easily change it.  Because this type is embedded in many locations, updates to this type
 //     will affect numerous schemas.  Don't make new APIs embed an underspecified API type they do not control.
+//
 // Instead of using this type, create a locally provided and used type that is well-focused on your reference.
 // For example, ServiceReferences for admission registration: https://github.com/kubernetes/api/blob/release-1.17/admissionregistration/v1/types.go#L533 .
 // +k8s:deepcopy-gen:interfaces=k8s.io/apimachinery/pkg/runtime.Object
@@ -2722,7 +2732,7 @@ message PersistentVolumeClaimSpec {
   // * While DataSource ignores disallowed values (dropping them), DataSourceRef
   //   preserves all values, and generates an error if a disallowed value is
   //   specified.
-  // (Alpha) Using this field requires the AnyVolumeDataSource feature gate to be enabled.
+  // (Beta) Using this field requires the AnyVolumeDataSource feature gate to be enabled.
   // +optional
   optional TypedLocalObjectReference dataSourceRef = 8;
 }
@@ -2941,6 +2951,7 @@ message PersistentVolumeSpec {
   // claim.VolumeName is the authoritative bind between PV and PVC.
   // More info: https://kubernetes.io/docs/concepts/storage/persistent-volumes#binding
   // +optional
+  // +structType=granular
   optional ObjectReference claimRef = 4;
 
   // persistentVolumeReclaimPolicy defines what happens to a persistent volume when released from its claim.
@@ -3062,7 +3073,7 @@ message PodAffinityTerm {
   // namespaces specifies a static list of namespace names that the term applies to.
   // The term is applied to the union of the namespaces listed in this field
   // and the ones selected by namespaceSelector.
-  // null or empty namespaces list and null namespaceSelector means "this pod's namespace"
+  // null or empty namespaces list and null namespaceSelector means "this pod's namespace".
   // +optional
   repeated string namespaces = 2;
 
@@ -3078,7 +3089,6 @@ message PodAffinityTerm {
   // and the ones listed in the namespaces field.
   // null selector and null or empty namespaces list means "this pod's namespace".
   // An empty selector ({}) matches all namespaces.
-  // This field is beta-level and is only honored when PodAffinityNamespaceSelector feature is enabled.
   // +optional
   optional k8s.io.apimachinery.pkg.apis.meta.v1.LabelSelector namespaceSelector = 4;
 }
@@ -3235,7 +3245,8 @@ message PodExecOptions {
 
 // IP address information for entries in the (plural) PodIPs field.
 // Each entry includes:
-//    IP: An IP address allocated to the pod. Routable at least within the cluster.
+//
+// 	IP: An IP address allocated to the pod. Routable at least within the cluster.
 message PodIP {
   // ip is an IP address (IPv4 or IPv6) assigned to the pod
   optional string ip = 1;
@@ -3477,7 +3488,6 @@ message PodSpec {
   // pod to perform user-initiated actions such as debugging. This list cannot be specified when
   // creating a pod, and it cannot be modified by updating the pod spec. In order to add an
   // ephemeral container to an existing pod, use the pod's ephemeralcontainers subresource.
-  // This field is beta-level and available on clusters that haven't disabled the EphemeralContainers feature gate.
   // +optional
   // +patchMergeKey=name
   // +patchStrategy=merge
@@ -3578,8 +3588,7 @@ message PodSpec {
   optional PodSecurityContext securityContext = 14;
 
   // ImagePullSecrets is an optional list of references to secrets in the same namespace to use for pulling any of the images used by this PodSpec.
-  // If specified, these secrets will be passed to individual puller implementations for them to use. For example,
-  // in the case of docker, only DockerConfig type secrets are honored.
+  // If specified, these secrets will be passed to individual puller implementations for them to use.
   // More info: https://kubernetes.io/docs/concepts/containers/images#specifying-imagepullsecrets-on-a-pod
   // +optional
   // +patchMergeKey=name
@@ -3651,7 +3660,6 @@ message PodSpec {
   // If unset or empty, the "legacy" RuntimeClass will be used, which is an implicit class with an
   // empty definition that uses the default runtime handler.
   // More info: https://git.k8s.io/enhancements/keps/sig-node/585-runtime-class
-  // This is a beta feature as of Kubernetes v1.14.
   // +optional
   optional string runtimeClassName = 29;
 
@@ -3664,7 +3672,6 @@ message PodSpec {
   // PreemptionPolicy is the Policy for preempting pods with lower priority.
   // One of Never, PreemptLowerPriority.
   // Defaults to PreemptLowerPriority if unset.
-  // This field is beta-level, gated by the NonPreemptingPriority feature-gate.
   // +optional
   optional string preemptionPolicy = 31;
 
@@ -3675,7 +3682,6 @@ message PodSpec {
   // set. If RuntimeClass is configured and selected in the PodSpec, Overhead will be set to the value
   // defined in the corresponding RuntimeClass, otherwise it will remain unset and treated as zero.
   // More info: https://git.k8s.io/enhancements/keps/sig-node/688-pod-overhead/README.md
-  // This field is beta-level as of Kubernetes v1.18, and is only honored by servers that enable the PodOverhead feature.
   // +optional
   map<string, k8s.io.apimachinery.pkg.api.resource.Quantity> overhead = 32;
 
@@ -3707,6 +3713,7 @@ message PodSpec {
   // If the OS field is set to windows, following fields must be unset:
   // - spec.hostPID
   // - spec.hostIPC
+  // - spec.hostUsers
   // - spec.securityContext.seLinuxOptions
   // - spec.securityContext.seccompProfile
   // - spec.securityContext.fsGroup
@@ -3726,8 +3733,20 @@ message PodSpec {
   // - spec.containers[*].securityContext.runAsUser
   // - spec.containers[*].securityContext.runAsGroup
   // +optional
-  // This is an alpha field and requires the IdentifyPodOS feature
   optional PodOS os = 36;
+
+  // Use the host's user namespace.
+  // Optional: Default to true.
+  // If set to true or not present, the pod will be run in the host user namespace, useful
+  // for when the pod needs a feature only available to the host user namespace, such as
+  // loading a kernel module with CAP_SYS_MODULE.
+  // When set to false, a new userns is created for the pod. Setting false is useful for
+  // mitigating container breakout vulnerabilities even allowing users to run their
+  // containers as root without actually having root privileges on the host.
+  // This field is alpha-level and is only honored by servers that enable the UserNamespacesSupport feature.
+  // +k8s:conversion-gen=false
+  // +optional
+  optional bool hostUsers = 37;
 }
 
 // PodStatus represents information about the status of a pod. Status may trail the actual
@@ -3809,8 +3828,7 @@ message PodStatus {
   // More info: https://kubernetes.io/docs/concepts/workloads/pods/pod-lifecycle#pod-and-container-status
   repeated ContainerStatus initContainerStatuses = 10;
 
-  // The list has one entry per container in the manifest. Each entry is currently the output
-  // of `docker inspect`.
+  // The list has one entry per container in the manifest.
   // More info: https://kubernetes.io/docs/concepts/workloads/pods/pod-lifecycle#pod-and-container-status
   // +optional
   repeated ContainerStatus containerStatuses = 8;
@@ -3822,7 +3840,6 @@ message PodStatus {
   optional string qosClass = 9;
 
   // Status for any ephemeral containers that have run in this pod.
-  // This field is beta-level and available on clusters that haven't disabled the EphemeralContainers feature gate.
   // +optional
   repeated ContainerStatus ephemeralContainerStatuses = 13;
 }
@@ -4017,7 +4034,7 @@ message ProbeHandler {
   optional TCPSocketAction tcpSocket = 3;
 
   // GRPC specifies an action involving a GRPC port.
-  // This is an alpha field and requires enabling GRPCContainerProbe feature gate.
+  // This is a beta field and requires enabling GRPCContainerProbe feature gate.
   // +featureGate=GRPCContainerProbe
   // +optional
   optional GRPCAction grpc = 4;
@@ -4276,7 +4293,7 @@ message ReplicationControllerSpec {
 // ReplicationControllerStatus represents the current status of a replication
 // controller.
 message ReplicationControllerStatus {
-  // Replicas is the most recently oberved number of replicas.
+  // Replicas is the most recently observed number of replicas.
   // More info: https://kubernetes.io/docs/concepts/workloads/controllers/replicationcontroller#what-is-a-replicationcontroller
   optional int32 replicas = 1;
 
@@ -4830,7 +4847,10 @@ message ServiceAccount {
   // +optional
   optional k8s.io.apimachinery.pkg.apis.meta.v1.ObjectMeta metadata = 1;
 
-  // Secrets is the list of secrets allowed to be used by pods running using this ServiceAccount.
+  // Secrets is a list of the secrets in the same namespace that pods running using this ServiceAccount are allowed to use.
+  // Pods are only limited to this list if this service account has a "kubernetes.io/enforce-mountable-secrets" annotation set to "true".
+  // This field should not be used to find auto-generated service account token secrets for use outside of pods.
+  // Instead, tokens can be requested directly using the TokenRequest API, or service account token secrets can be manually created.
   // More info: https://kubernetes.io/docs/concepts/configuration/secret
   // +optional
   // +patchMergeKey=name
@@ -5088,12 +5108,19 @@ message ServiceSpec {
   // +optional
   optional string externalName = 10;
 
-  // externalTrafficPolicy denotes if this Service desires to route external
-  // traffic to node-local or cluster-wide endpoints. "Local" preserves the
-  // client source IP and avoids a second hop for LoadBalancer and Nodeport
-  // type services, but risks potentially imbalanced traffic spreading.
-  // "Cluster" obscures the client source IP and may cause a second hop to
-  // another node, but should have good overall load-spreading.
+  // externalTrafficPolicy describes how nodes distribute service traffic they
+  // receive on one of the Service's "externally-facing" addresses (NodePorts,
+  // ExternalIPs, and LoadBalancer IPs). If set to "Local", the proxy will configure
+  // the service in a way that assumes that external load balancers will take care
+  // of balancing the service traffic between nodes, and so each node will deliver
+  // traffic only to the node-local endpoints of the service, without masquerading
+  // the client source IP. (Traffic mistakenly sent to a node with no endpoints will
+  // be dropped.) The default value, "Cluster", uses the standard behavior of
+  // routing to all endpoints evenly (possibly modified by topology and other
+  // features). Note that traffic sent to an External IP or LoadBalancer IP from
+  // within the cluster will always get "Cluster" semantics, but clients sending to
+  // a NodePort from within the cluster may need to take traffic policy into account
+  // when picking a node.
   // +optional
   optional string externalTrafficPolicy = 11;
 
@@ -5106,6 +5133,7 @@ message ServiceSpec {
   // service or not.  If this field is specified when creating a Service
   // which does not need it, creation will fail. This field will be wiped
   // when updating a Service to no longer need it (e.g. changing type).
+  // This field cannot be updated once set.
   // +optional
   optional int32 healthCheckNodePort = 12;
 
@@ -5179,12 +5207,12 @@ message ServiceSpec {
   // +optional
   optional string loadBalancerClass = 21;
 
-  // InternalTrafficPolicy specifies if the cluster internal traffic
-  // should be routed to all endpoints or node-local endpoints only.
-  // "Cluster" routes internal traffic to a Service to all endpoints.
-  // "Local" routes traffic to node-local endpoints only, traffic is
-  // dropped if no node-local endpoints are ready.
-  // The default value is "Cluster".
+  // InternalTrafficPolicy describes how nodes distribute service traffic they
+  // receive on the ClusterIP. If set to "Local", the proxy will assume that pods
+  // only want to talk to endpoints of the service on the same node as the pod,
+  // dropping the traffic if there are no local endpoints. The default value,
+  // "Cluster", uses the standard behavior of routing to all endpoints evenly
+  // (possibly modified by topology and other features).
   // +featureGate=ServiceInternalTrafficPolicy
   // +optional
   optional string internalTrafficPolicy = 22;
@@ -5380,15 +5408,18 @@ message TopologySpreadConstraint {
   // MaxSkew describes the degree to which pods may be unevenly distributed.
   // When `whenUnsatisfiable=DoNotSchedule`, it is the maximum permitted difference
   // between the number of matching pods in the target topology and the global minimum.
+  // The global minimum is the minimum number of matching pods in an eligible domain
+  // or zero if the number of eligible domains is less than MinDomains.
   // For example, in a 3-zone cluster, MaxSkew is set to 1, and pods with the same
-  // labelSelector spread as 1/1/0:
+  // labelSelector spread as 2/2/1:
+  // In this case, the global minimum is 1.
   // +-------+-------+-------+
   // | zone1 | zone2 | zone3 |
   // +-------+-------+-------+
-  // |   P   |   P   |       |
+  // |  P P  |  P P  |   P   |
   // +-------+-------+-------+
-  // - if MaxSkew is 1, incoming pod can only be scheduled to zone3 to become 1/1/1;
-  // scheduling it onto zone1(zone2) would make the ActualSkew(2-0) on zone1(zone2)
+  // - if MaxSkew is 1, incoming pod can only be scheduled to zone3 to become 2/2/2;
+  // scheduling it onto zone1(zone2) would make the ActualSkew(3-1) on zone1(zone2)
   // violate MaxSkew(1).
   // - if MaxSkew is 2, incoming pod can be scheduled onto any zone.
   // When `whenUnsatisfiable=ScheduleAnyway`, it is used to give higher precedence
@@ -5400,6 +5431,11 @@ message TopologySpreadConstraint {
   // and identical values are considered to be in the same topology.
   // We consider each <key, value> as a "bucket", and try to put balanced number
   // of pods into each bucket.
+  // We define a domain as a particular instance of a topology.
+  // Also, we define an eligible domain as a domain whose nodes meet the requirements of
+  // nodeAffinityPolicy and nodeTaintsPolicy.
+  // e.g. If TopologyKey is "kubernetes.io/hostname", each Node is a domain of that topology.
+  // And, if TopologyKey is "topology.kubernetes.io/zone", each zone is a domain of that topology.
   // It's a required field.
   optional string topologyKey = 2;
 
@@ -5431,6 +5467,64 @@ message TopologySpreadConstraint {
   // in their corresponding topology domain.
   // +optional
   optional k8s.io.apimachinery.pkg.apis.meta.v1.LabelSelector labelSelector = 4;
+
+  // MinDomains indicates a minimum number of eligible domains.
+  // When the number of eligible domains with matching topology keys is less than minDomains,
+  // Pod Topology Spread treats "global minimum" as 0, and then the calculation of Skew is performed.
+  // And when the number of eligible domains with matching topology keys equals or greater than minDomains,
+  // this value has no effect on scheduling.
+  // As a result, when the number of eligible domains is less than minDomains,
+  // scheduler won't schedule more than maxSkew Pods to those domains.
+  // If value is nil, the constraint behaves as if MinDomains is equal to 1.
+  // Valid values are integers greater than 0.
+  // When value is not nil, WhenUnsatisfiable must be DoNotSchedule.
+  //
+  // For example, in a 3-zone cluster, MaxSkew is set to 2, MinDomains is set to 5 and pods with the same
+  // labelSelector spread as 2/2/2:
+  // +-------+-------+-------+
+  // | zone1 | zone2 | zone3 |
+  // +-------+-------+-------+
+  // |  P P  |  P P  |  P P  |
+  // +-------+-------+-------+
+  // The number of domains is less than 5(MinDomains), so "global minimum" is treated as 0.
+  // In this situation, new pod with the same labelSelector cannot be scheduled,
+  // because computed skew will be 3(3 - 0) if new Pod is scheduled to any of the three zones,
+  // it will violate MaxSkew.
+  //
+  // This is a beta field and requires the MinDomainsInPodTopologySpread feature gate to be enabled (enabled by default).
+  // +optional
+  optional int32 minDomains = 5;
+
+  // NodeAffinityPolicy indicates how we will treat Pod's nodeAffinity/nodeSelector
+  // when calculating pod topology spread skew. Options are:
+  // - Honor: only nodes matching nodeAffinity/nodeSelector are included in the calculations.
+  // - Ignore: nodeAffinity/nodeSelector are ignored. All nodes are included in the calculations.
+  //
+  // If this value is nil, the behavior is equivalent to the Honor policy.
+  // This is a alpha-level feature enabled by the NodeInclusionPolicyInPodTopologySpread feature flag.
+  // +optional
+  optional string nodeAffinityPolicy = 6;
+
+  // NodeTaintsPolicy indicates how we will treat node taints when calculating
+  // pod topology spread skew. Options are:
+  // - Honor: nodes without taints, along with tainted nodes for which the incoming pod
+  // has a toleration, are included.
+  // - Ignore: node taints are ignored. All nodes are included.
+  //
+  // If this value is nil, the behavior is equivalent to the Ignore policy.
+  // This is a alpha-level feature enabled by the NodeInclusionPolicyInPodTopologySpread feature flag.
+  // +optional
+  optional string nodeTaintsPolicy = 7;
+
+  // MatchLabelKeys is a set of pod label keys to select the pods over which
+  // spreading will be calculated. The keys are used to lookup values from the
+  // incoming pod labels, those key-value labels are ANDed with labelSelector
+  // to select the group of existing pods over which spreading will be calculated
+  // for the incoming pod. Keys that don't exist in the incoming pod labels will
+  // be ignored. A null or empty list means only match against labelSelector.
+  // +listType=atomic
+  // +optional
+  repeated string matchLabelKeys = 8;
 }
 
 // TypedLocalObjectReference contains enough information to let you locate the

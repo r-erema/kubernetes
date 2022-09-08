@@ -40,27 +40,255 @@ import (
 
 var ignoreErrValueDetail = cmpopts.IgnoreFields(field.Error{}, "BadValue", "Detail")
 
+// TestJobStrategy_PrepareForUpdate tests various scenearios for PrepareForUpdate
+func TestJobStrategy_PrepareForUpdate(t *testing.T) {
+	validSelector := getValidLabelSelector()
+	validPodTemplateSpec := getValidPodTemplateSpecForSelector(validSelector)
+
+	podFailurePolicy := &batch.PodFailurePolicy{
+		Rules: []batch.PodFailurePolicyRule{
+			{
+				Action: batch.PodFailurePolicyActionFailJob,
+				OnExitCodes: &batch.PodFailurePolicyOnExitCodesRequirement{
+					ContainerName: pointer.String("container-name"),
+					Operator:      batch.PodFailurePolicyOnExitCodesOpIn,
+					Values:        []int32{1},
+				},
+			},
+		},
+	}
+	updatedPodFailurePolicy := &batch.PodFailurePolicy{
+		Rules: []batch.PodFailurePolicyRule{
+			{
+				Action: batch.PodFailurePolicyActionIgnore,
+				OnExitCodes: &batch.PodFailurePolicyOnExitCodesRequirement{
+					ContainerName: pointer.String("updated-container-name"),
+					Operator:      batch.PodFailurePolicyOnExitCodesOpIn,
+					Values:        []int32{2},
+				},
+			},
+		},
+	}
+
+	cases := map[string]struct {
+		enableJobPodFailurePolicy bool
+		job                       batch.Job
+		updatedJob                batch.Job
+		wantJob                   batch.Job
+	}{
+		"update job with a new field; updated when JobPodFailurePolicy enabled": {
+			enableJobPodFailurePolicy: true,
+			job: batch.Job{
+				ObjectMeta: getValidObjectMeta(0),
+				Spec: batch.JobSpec{
+					Selector:         validSelector,
+					Template:         validPodTemplateSpec,
+					PodFailurePolicy: nil,
+				},
+			},
+			updatedJob: batch.Job{
+				ObjectMeta: getValidObjectMeta(0),
+				Spec: batch.JobSpec{
+					Selector:         validSelector,
+					Template:         validPodTemplateSpec,
+					PodFailurePolicy: updatedPodFailurePolicy,
+				},
+			},
+			wantJob: batch.Job{
+				ObjectMeta: getValidObjectMeta(1),
+				Spec: batch.JobSpec{
+					Selector:         validSelector,
+					Template:         validPodTemplateSpec,
+					PodFailurePolicy: updatedPodFailurePolicy,
+				},
+			},
+		},
+		"update job with a new field; not updated when JobPodFailurePolicy disabled": {
+			enableJobPodFailurePolicy: false,
+			job: batch.Job{
+				ObjectMeta: getValidObjectMeta(0),
+				Spec: batch.JobSpec{
+					Selector:         validSelector,
+					Template:         validPodTemplateSpec,
+					PodFailurePolicy: nil,
+				},
+			},
+			updatedJob: batch.Job{
+				ObjectMeta: getValidObjectMeta(0),
+				Spec: batch.JobSpec{
+					Selector:         validSelector,
+					Template:         validPodTemplateSpec,
+					PodFailurePolicy: updatedPodFailurePolicy,
+				},
+			},
+			wantJob: batch.Job{
+				ObjectMeta: getValidObjectMeta(0),
+				Spec: batch.JobSpec{
+					Selector:         validSelector,
+					Template:         validPodTemplateSpec,
+					PodFailurePolicy: nil,
+				},
+			},
+		},
+		"update pre-existing field; updated when JobPodFailurePolicy enabled": {
+			enableJobPodFailurePolicy: true,
+			job: batch.Job{
+				ObjectMeta: getValidObjectMeta(0),
+				Spec: batch.JobSpec{
+					Selector:         validSelector,
+					Template:         validPodTemplateSpec,
+					PodFailurePolicy: podFailurePolicy,
+				},
+			},
+			updatedJob: batch.Job{
+				ObjectMeta: getValidObjectMeta(0),
+				Spec: batch.JobSpec{
+					Selector:         validSelector,
+					Template:         validPodTemplateSpec,
+					PodFailurePolicy: updatedPodFailurePolicy,
+				},
+			},
+			wantJob: batch.Job{
+				ObjectMeta: getValidObjectMeta(1),
+				Spec: batch.JobSpec{
+					Selector:         validSelector,
+					Template:         validPodTemplateSpec,
+					PodFailurePolicy: updatedPodFailurePolicy,
+				},
+			},
+		},
+		"update pre-existing field; updated when JobPodFailurePolicy disabled": {
+			enableJobPodFailurePolicy: false,
+			job: batch.Job{
+				ObjectMeta: getValidObjectMeta(0),
+				Spec: batch.JobSpec{
+					Selector:         validSelector,
+					Template:         validPodTemplateSpec,
+					PodFailurePolicy: podFailurePolicy,
+				},
+			},
+			updatedJob: batch.Job{
+				ObjectMeta: getValidObjectMeta(0),
+				Spec: batch.JobSpec{
+					Selector:         validSelector,
+					Template:         validPodTemplateSpec,
+					PodFailurePolicy: updatedPodFailurePolicy,
+				},
+			},
+			wantJob: batch.Job{
+				ObjectMeta: getValidObjectMeta(1),
+				Spec: batch.JobSpec{
+					Selector:         validSelector,
+					Template:         validPodTemplateSpec,
+					PodFailurePolicy: updatedPodFailurePolicy,
+				},
+			},
+		},
+	}
+
+	for name, tc := range cases {
+		t.Run(name, func(t *testing.T) {
+			defer featuregatetesting.SetFeatureGateDuringTest(t, utilfeature.DefaultFeatureGate, features.JobPodFailurePolicy, tc.enableJobPodFailurePolicy)()
+			ctx := genericapirequest.NewDefaultContext()
+
+			Strategy.PrepareForUpdate(ctx, &tc.updatedJob, &tc.job)
+
+			if diff := cmp.Diff(tc.wantJob, tc.updatedJob); diff != "" {
+				t.Errorf("Job pod failure policy (-want,+got):\n%s", diff)
+			}
+		})
+	}
+}
+
+// TestJobStrategy_PrepareForUpdate tests various scenearios for PrepareForCreate
+func TestJobStrategy_PrepareForCreate(t *testing.T) {
+	validSelector := getValidLabelSelector()
+	validPodTemplateSpec := getValidPodTemplateSpecForSelector(validSelector)
+
+	podFailurePolicy := &batch.PodFailurePolicy{
+		Rules: []batch.PodFailurePolicyRule{
+			{
+				Action: batch.PodFailurePolicyActionFailJob,
+				OnExitCodes: &batch.PodFailurePolicyOnExitCodesRequirement{
+					ContainerName: pointer.String("container-name"),
+					Operator:      batch.PodFailurePolicyOnExitCodesOpIn,
+					Values:        []int32{1},
+				},
+			},
+		},
+	}
+
+	cases := map[string]struct {
+		enableJobPodFailurePolicy bool
+		job                       batch.Job
+		wantJob                   batch.Job
+	}{
+		"create job with a new field; JobPodFailurePolicy enabled": {
+			enableJobPodFailurePolicy: true,
+			job: batch.Job{
+				ObjectMeta: getValidObjectMeta(0),
+				Spec: batch.JobSpec{
+					Selector:         validSelector,
+					Template:         validPodTemplateSpec,
+					PodFailurePolicy: podFailurePolicy,
+				},
+			},
+			wantJob: batch.Job{
+				ObjectMeta: getValidObjectMetaWithAnnotations(1, map[string]string{batchv1.JobTrackingFinalizer: ""}),
+				Spec: batch.JobSpec{
+					Selector:         validSelector,
+					Template:         validPodTemplateSpec,
+					PodFailurePolicy: podFailurePolicy,
+				},
+			},
+		},
+		"create job with a new field; JobPodFailurePolicy disabled": {
+			enableJobPodFailurePolicy: false,
+			job: batch.Job{
+				ObjectMeta: getValidObjectMeta(0),
+				Spec: batch.JobSpec{
+					Selector:         validSelector,
+					Template:         validPodTemplateSpec,
+					PodFailurePolicy: podFailurePolicy,
+				},
+			},
+			wantJob: batch.Job{
+				ObjectMeta: getValidObjectMetaWithAnnotations(1, map[string]string{batchv1.JobTrackingFinalizer: ""}),
+				Spec: batch.JobSpec{
+					Selector:         validSelector,
+					Template:         validPodTemplateSpec,
+					PodFailurePolicy: nil,
+				},
+			},
+		},
+	}
+
+	for name, tc := range cases {
+		t.Run(name, func(t *testing.T) {
+			defer featuregatetesting.SetFeatureGateDuringTest(t, utilfeature.DefaultFeatureGate, features.JobPodFailurePolicy, tc.enableJobPodFailurePolicy)()
+			ctx := genericapirequest.NewDefaultContext()
+
+			Strategy.PrepareForCreate(ctx, &tc.job)
+
+			if diff := cmp.Diff(tc.wantJob, tc.job); diff != "" {
+				t.Errorf("Job pod failure policy (-want,+got):\n%s", diff)
+			}
+		})
+	}
+}
+
+// TODO(#111514): refactor by spliting into dedicated test functions
 func TestJobStrategy(t *testing.T) {
 	cases := map[string]struct {
-		indexedJobEnabled             bool
-		suspendJobEnabled             bool
 		trackingWithFinalizersEnabled bool
 	}{
 		"features disabled": {},
-		"indexed job enabled": {
-			indexedJobEnabled: true,
-		},
-		"suspend job enabled": {
-			suspendJobEnabled: true,
-		},
 		"new job tracking enabled": {
 			trackingWithFinalizersEnabled: true,
 		},
 	}
 	for name, tc := range cases {
 		t.Run(name, func(t *testing.T) {
-			defer featuregatetesting.SetFeatureGateDuringTest(t, utilfeature.DefaultFeatureGate, features.IndexedJob, tc.indexedJobEnabled)()
-			defer featuregatetesting.SetFeatureGateDuringTest(t, utilfeature.DefaultFeatureGate, features.SuspendJob, tc.suspendJobEnabled)()
 			defer featuregatetesting.SetFeatureGateDuringTest(t, utilfeature.DefaultFeatureGate, features.JobTrackingWithFinalizers, tc.trackingWithFinalizersEnabled)()
 			testJobStrategy(t)
 		})
@@ -68,8 +296,6 @@ func TestJobStrategy(t *testing.T) {
 }
 
 func testJobStrategy(t *testing.T) {
-	indexedJobEnabled := utilfeature.DefaultFeatureGate.Enabled(features.IndexedJob)
-	suspendJobEnabled := utilfeature.DefaultFeatureGate.Enabled(features.SuspendJob)
 	trackingWithFinalizersEnabled := utilfeature.DefaultFeatureGate.Enabled(features.JobTrackingWithFinalizers)
 	ctx := genericapirequest.NewDefaultContext()
 	if !Strategy.NamespaceScoped() {
@@ -127,11 +353,8 @@ func testJobStrategy(t *testing.T) {
 	if len(errs) != 0 {
 		t.Errorf("Unexpected error validating %v", errs)
 	}
-	if indexedJobEnabled != (job.Spec.CompletionMode != nil) {
-		t.Errorf("Job should allow setting .spec.completionMode only when %v feature is enabled", features.IndexedJob)
-	}
-	if !suspendJobEnabled && (job.Spec.Suspend != nil) {
-		t.Errorf("Job should allow setting .spec.suspend only when %v feature is enabled", features.SuspendJob)
+	if job.Spec.CompletionMode == nil {
+		t.Errorf("Job should allow setting .spec.completionMode")
 	}
 	wantAnnotations := map[string]string{"foo": "bar"}
 	if trackingWithFinalizersEnabled {
@@ -210,14 +433,8 @@ func testJobStrategy(t *testing.T) {
 	// disabled. We don't care about other combinations.
 	job.Spec.Suspend, updatedJob.Spec.Suspend = pointer.BoolPtr(false), pointer.BoolPtr(true)
 	Strategy.PrepareForUpdate(ctx, updatedJob, job)
-	if !suspendJobEnabled && *updatedJob.Spec.Suspend {
-		t.Errorf("[SuspendJob=%v] .spec.suspend should not be updated from false to true", suspendJobEnabled)
-	}
 	job.Spec.Suspend, updatedJob.Spec.Suspend = nil, pointer.BoolPtr(true)
 	Strategy.PrepareForUpdate(ctx, updatedJob, job)
-	if !suspendJobEnabled && updatedJob.Spec.Suspend != nil {
-		t.Errorf("[SuspendJob=%v] .spec.suspend should not be updated from nil to non-nil", suspendJobEnabled)
-	}
 
 	// Make sure we correctly implement the interface.
 	// Otherwise a typo could silently change the default.
@@ -609,4 +826,36 @@ func TestSelectableFieldLabelConversions(t *testing.T) {
 
 func completionModePtr(m batch.CompletionMode) *batch.CompletionMode {
 	return &m
+}
+
+func getValidObjectMeta(generation int64) metav1.ObjectMeta {
+	return getValidObjectMetaWithAnnotations(generation, nil)
+}
+
+func getValidObjectMetaWithAnnotations(generation int64, annotations map[string]string) metav1.ObjectMeta {
+	return metav1.ObjectMeta{
+		Name:        "myjob",
+		Namespace:   metav1.NamespaceDefault,
+		Generation:  generation,
+		Annotations: annotations,
+	}
+}
+
+func getValidLabelSelector() *metav1.LabelSelector {
+	return &metav1.LabelSelector{
+		MatchLabels: map[string]string{"a": "b"},
+	}
+}
+
+func getValidPodTemplateSpecForSelector(validSelector *metav1.LabelSelector) api.PodTemplateSpec {
+	return api.PodTemplateSpec{
+		ObjectMeta: metav1.ObjectMeta{
+			Labels: validSelector.MatchLabels,
+		},
+		Spec: api.PodSpec{
+			RestartPolicy: api.RestartPolicyOnFailure,
+			DNSPolicy:     api.DNSClusterFirst,
+			Containers:    []api.Container{{Name: "abc", Image: "image", ImagePullPolicy: "IfNotPresent", TerminationMessagePolicy: api.TerminationMessageReadFile}},
+		},
+	}
 }

@@ -42,9 +42,10 @@ type ContainerManager interface {
 	// ListContainers lists all containers by filters.
 	ListContainers(filter *runtimeapi.ContainerFilter) ([]*runtimeapi.Container, error)
 	// ContainerStatus returns the status of the container.
-	ContainerStatus(containerID string) (*runtimeapi.ContainerStatus, error)
-	// UpdateContainerResources updates the cgroup resources for the container.
-	UpdateContainerResources(containerID string, resources *runtimeapi.LinuxContainerResources) error
+	ContainerStatus(containerID string, verbose bool) (*runtimeapi.ContainerStatusResponse, error)
+	// UpdateContainerResources updates ContainerConfig of the container synchronously.
+	// If runtime fails to transactionally update the requested resources, an error is returned.
+	UpdateContainerResources(containerID string, resources *runtimeapi.ContainerResources) error
 	// ExecSync executes a command in the container, and returns the stdout output.
 	// If command exits with a non-zero exit code, an error is returned.
 	ExecSync(containerID string, cmd []string, timeout time.Duration) (stdout []byte, stderr []byte, err error)
@@ -56,6 +57,10 @@ type ContainerManager interface {
 	// for the container. If it returns error, new container log file MUST NOT
 	// be created.
 	ReopenContainerLog(ContainerID string) error
+	// CheckpointContainer checkpoints a container
+	CheckpointContainer(options *runtimeapi.CheckpointContainerRequest) error
+	// GetContainerEvents gets container events from the CRI runtime
+	GetContainerEvents(containerEventsCh chan *runtimeapi.ContainerEventResponse) error
 }
 
 // PodSandboxManager contains methods for operating on PodSandboxes. The methods
@@ -71,7 +76,7 @@ type PodSandboxManager interface {
 	// sandbox, they should be forcibly removed.
 	RemovePodSandbox(podSandboxID string) error
 	// PodSandboxStatus returns the Status of the PodSandbox.
-	PodSandboxStatus(podSandboxID string) (*runtimeapi.PodSandboxStatus, error)
+	PodSandboxStatus(podSandboxID string, verbose bool) (*runtimeapi.PodSandboxStatusResponse, error)
 	// ListPodSandbox returns a list of Sandbox.
 	ListPodSandbox(filter *runtimeapi.PodSandboxFilter) ([]*runtimeapi.PodSandbox, error)
 	// PortForward prepares a streaming endpoint to forward ports from a PodSandbox, and returns the address.
@@ -104,7 +109,7 @@ type RuntimeService interface {
 	// UpdateRuntimeConfig updates runtime configuration if specified
 	UpdateRuntimeConfig(runtimeConfig *runtimeapi.RuntimeConfig) error
 	// Status returns the status of the runtime.
-	Status() (*runtimeapi.RuntimeStatus, error)
+	Status(verbose bool) (*runtimeapi.StatusResponse, error)
 }
 
 // ImageManagerService interface should be implemented by a container image
@@ -114,7 +119,7 @@ type ImageManagerService interface {
 	// ListImages lists the existing images.
 	ListImages(filter *runtimeapi.ImageFilter) ([]*runtimeapi.Image, error)
 	// ImageStatus returns the status of the image.
-	ImageStatus(image *runtimeapi.ImageSpec) (*runtimeapi.Image, error)
+	ImageStatus(image *runtimeapi.ImageSpec, verbose bool) (*runtimeapi.ImageStatusResponse, error)
 	// PullImage pulls an image with the authentication config.
 	PullImage(image *runtimeapi.ImageSpec, auth *runtimeapi.AuthConfig, podSandboxConfig *runtimeapi.PodSandboxConfig) (string, error)
 	// RemoveImage removes the image.

@@ -20,7 +20,6 @@ limitations under the License.
 package app
 
 import (
-	"fmt"
 	"net"
 	"reflect"
 	"testing"
@@ -32,153 +31,10 @@ import (
 	clientsetfake "k8s.io/client-go/kubernetes/fake"
 
 	proxyconfigapi "k8s.io/kubernetes/pkg/proxy/apis/config"
-	"k8s.io/kubernetes/pkg/proxy/ipvs"
 	proxyutiliptables "k8s.io/kubernetes/pkg/proxy/util/iptables"
 	utiliptables "k8s.io/kubernetes/pkg/util/iptables"
 	utiliptablestest "k8s.io/kubernetes/pkg/util/iptables/testing"
 )
-
-type fakeIPSetVersioner struct {
-	version string // what to return
-	err     error  // what to return
-}
-
-func (fake *fakeIPSetVersioner) GetVersion() (string, error) {
-	return fake.version, fake.err
-}
-
-type fakeKernelCompatTester struct {
-	ok bool
-}
-
-func (fake *fakeKernelCompatTester) IsCompatible() error {
-	if !fake.ok {
-		return fmt.Errorf("error")
-	}
-	return nil
-}
-
-// fakeKernelHandler implements KernelHandler.
-type fakeKernelHandler struct {
-	modules       []string
-	kernelVersion string
-}
-
-func (fake *fakeKernelHandler) GetModules() ([]string, error) {
-	return fake.modules, nil
-}
-
-func (fake *fakeKernelHandler) GetKernelVersion() (string, error) {
-	return fake.kernelVersion, nil
-}
-
-func Test_getProxyMode(t *testing.T) {
-	var cases = []struct {
-		flag          string
-		ipsetVersion  string
-		kmods         []string
-		kernelVersion string
-		kernelCompat  bool
-		ipsetError    error
-		expected      string
-		scheduler     string
-	}{
-		{ // flag says userspace
-			flag:     "userspace",
-			expected: proxyModeUserspace,
-		},
-		{ // flag says iptables, kernel not compatible
-			flag:         "iptables",
-			kernelCompat: false,
-			expected:     proxyModeUserspace,
-		},
-		{ // flag says iptables, kernel is compatible
-			flag:         "iptables",
-			kernelCompat: true,
-			expected:     proxyModeIPTables,
-		},
-		{ // detect, kernel not compatible
-			flag:         "",
-			kernelCompat: false,
-			expected:     proxyModeUserspace,
-		},
-		{ // detect, kernel is compatible
-			flag:         "",
-			kernelCompat: true,
-			expected:     proxyModeIPTables,
-		},
-		{ // flag says ipvs, ipset version ok, kernel modules installed for linux kernel before 4.19
-			flag:          "ipvs",
-			kmods:         []string{"ip_vs", "ip_vs_rr", "ip_vs_wrr", "ip_vs_sh", "nf_conntrack_ipv4"},
-			kernelVersion: "4.18",
-			ipsetVersion:  ipvs.MinIPSetCheckVersion,
-			expected:      proxyModeIPVS,
-			scheduler:     "rr",
-		},
-		{ // flag says ipvs, ipset version ok, kernel modules installed for linux kernel 4.19
-			flag:          "ipvs",
-			kmods:         []string{"ip_vs", "ip_vs_rr", "ip_vs_wrr", "ip_vs_sh", "nf_conntrack"},
-			kernelVersion: "4.19",
-			ipsetVersion:  ipvs.MinIPSetCheckVersion,
-			expected:      proxyModeIPVS,
-			scheduler:     "rr",
-		},
-		{ // flag says ipvs, ipset version too low, fallback on iptables mode
-			flag:          "ipvs",
-			kmods:         []string{"ip_vs", "ip_vs_rr", "ip_vs_wrr", "ip_vs_sh", "nf_conntrack"},
-			kernelVersion: "4.19",
-			ipsetVersion:  "0.0",
-			kernelCompat:  true,
-			expected:      proxyModeIPTables,
-		},
-		{ // flag says ipvs, bad ipset version, fallback on iptables mode
-			flag:          "ipvs",
-			kmods:         []string{"ip_vs", "ip_vs_rr", "ip_vs_wrr", "ip_vs_sh", "nf_conntrack"},
-			kernelVersion: "4.19",
-			ipsetVersion:  "a.b.c",
-			kernelCompat:  true,
-			expected:      proxyModeIPTables,
-		},
-		{ // flag says ipvs, required kernel modules are not installed, fallback on iptables mode
-			flag:          "ipvs",
-			kmods:         []string{"foo", "bar", "baz"},
-			kernelVersion: "4.19",
-			ipsetVersion:  ipvs.MinIPSetCheckVersion,
-			kernelCompat:  true,
-			expected:      proxyModeIPTables,
-		},
-		{ // flag says ipvs, ipset version ok, kernel modules installed for sed scheduler
-			flag:          "ipvs",
-			kmods:         []string{"ip_vs", "ip_vs_rr", "ip_vs_wrr", "ip_vs_sh", "nf_conntrack", "ip_vs_sed"},
-			kernelVersion: "4.19",
-			ipsetVersion:  ipvs.MinIPSetCheckVersion,
-			expected:      proxyModeIPVS,
-			scheduler:     "sed",
-		},
-		{ // flag says ipvs, kernel modules not installed for sed scheduler, fallback to iptables
-			flag:          "ipvs",
-			kmods:         []string{"ip_vs", "ip_vs_rr", "ip_vs_wrr", "ip_vs_sh", "nf_conntrack"},
-			kernelVersion: "4.19",
-			ipsetVersion:  ipvs.MinIPSetCheckVersion,
-			expected:      proxyModeIPTables,
-			kernelCompat:  true,
-			scheduler:     "sed",
-		},
-	}
-	for i, c := range cases {
-		kcompater := &fakeKernelCompatTester{c.kernelCompat}
-		ipsetver := &fakeIPSetVersioner{c.ipsetVersion, c.ipsetError}
-		khandler := &fakeKernelHandler{
-			modules:       c.kmods,
-			kernelVersion: c.kernelVersion,
-		}
-		canUseIPVS, _ := ipvs.CanUseIPVSProxier(khandler, ipsetver, cases[i].scheduler)
-		r := getProxyMode(c.flag, canUseIPVS, kcompater)
-		if r != c.expected {
-			t.Errorf("Case[%d] Expected %q, got %q", i, c.expected, r)
-		}
-	}
-}
 
 func Test_getDetectLocalMode(t *testing.T) {
 	cases := []struct {
@@ -194,6 +50,16 @@ func Test_getDetectLocalMode(t *testing.T) {
 		{
 			detectLocal: string(proxyconfigapi.LocalModeClusterCIDR),
 			expected:    proxyconfigapi.LocalModeClusterCIDR,
+			errExpected: false,
+		},
+		{
+			detectLocal: string(proxyconfigapi.LocalModeInterfaceNamePrefix),
+			expected:    proxyconfigapi.LocalModeInterfaceNamePrefix,
+			errExpected: false,
+		},
+		{
+			detectLocal: string(proxyconfigapi.LocalModeBridgeInterface),
+			expected:    proxyconfigapi.LocalModeBridgeInterface,
 			errExpected: false,
 		},
 		{
@@ -450,6 +316,54 @@ func Test_getLocalDetector(t *testing.T) {
 			expected:    proxyutiliptables.NewNoOpLocalDetector(),
 			errExpected: false,
 		},
+		// LocalModeBridgeInterface, nodeInfo and ipt are not needed for these cases
+		{
+			mode: proxyconfigapi.LocalModeBridgeInterface,
+			config: &proxyconfigapi.KubeProxyConfiguration{
+				DetectLocal: proxyconfigapi.DetectLocalConfiguration{BridgeInterface: "eth"},
+			},
+			expected:    resolveLocalDetector(t)(proxyutiliptables.NewDetectLocalByBridgeInterface("eth")),
+			errExpected: false,
+		},
+		{
+			mode: proxyconfigapi.LocalModeBridgeInterface,
+			config: &proxyconfigapi.KubeProxyConfiguration{
+				DetectLocal: proxyconfigapi.DetectLocalConfiguration{BridgeInterface: ""},
+			},
+			errExpected: true,
+		},
+		{
+			mode: proxyconfigapi.LocalModeBridgeInterface,
+			config: &proxyconfigapi.KubeProxyConfiguration{
+				DetectLocal: proxyconfigapi.DetectLocalConfiguration{BridgeInterface: "1234567890123456789"},
+			},
+			expected:    resolveLocalDetector(t)(proxyutiliptables.NewDetectLocalByBridgeInterface("1234567890123456789")),
+			errExpected: false,
+		},
+		// LocalModeInterfaceNamePrefix, nodeInfo and ipt are not needed for these cases
+		{
+			mode: proxyconfigapi.LocalModeInterfaceNamePrefix,
+			config: &proxyconfigapi.KubeProxyConfiguration{
+				DetectLocal: proxyconfigapi.DetectLocalConfiguration{InterfaceNamePrefix: "eth"},
+			},
+			expected:    resolveLocalDetector(t)(proxyutiliptables.NewDetectLocalByInterfaceNamePrefix("eth")),
+			errExpected: false,
+		},
+		{
+			mode: proxyconfigapi.LocalModeInterfaceNamePrefix,
+			config: &proxyconfigapi.KubeProxyConfiguration{
+				DetectLocal: proxyconfigapi.DetectLocalConfiguration{InterfaceNamePrefix: ""},
+			},
+			errExpected: true,
+		},
+		{
+			mode: proxyconfigapi.LocalModeInterfaceNamePrefix,
+			config: &proxyconfigapi.KubeProxyConfiguration{
+				DetectLocal: proxyconfigapi.DetectLocalConfiguration{InterfaceNamePrefix: "1234567890123456789"},
+			},
+			expected:    resolveLocalDetector(t)(proxyutiliptables.NewDetectLocalByInterfaceNamePrefix("1234567890123456789")),
+			errExpected: false,
+		},
 	}
 	for i, c := range cases {
 		r, err := getLocalDetector(c.mode, c.config, c.ipt, c.nodeInfo)
@@ -586,6 +500,42 @@ func Test_getDualStackLocalDetectorTuple(t *testing.T) {
 			ipt:         [2]utiliptables.Interface{utiliptablestest.NewFake(), utiliptablestest.NewIPv6Fake()},
 			expected:    [2]proxyutiliptables.LocalTrafficDetector{proxyutiliptables.NewNoOpLocalDetector(), proxyutiliptables.NewNoOpLocalDetector()},
 			errExpected: false,
+		},
+		// LocalModeBridgeInterface, nodeInfo and ipt are not needed for these cases
+		{
+			mode: proxyconfigapi.LocalModeBridgeInterface,
+			config: &proxyconfigapi.KubeProxyConfiguration{
+				DetectLocal: proxyconfigapi.DetectLocalConfiguration{BridgeInterface: "eth"},
+			},
+			expected: resolveDualStackLocalDetectors(t)(
+				proxyutiliptables.NewDetectLocalByBridgeInterface("eth"))(
+				proxyutiliptables.NewDetectLocalByBridgeInterface("eth")),
+			errExpected: false,
+		},
+		{
+			mode: proxyconfigapi.LocalModeBridgeInterface,
+			config: &proxyconfigapi.KubeProxyConfiguration{
+				DetectLocal: proxyconfigapi.DetectLocalConfiguration{BridgeInterface: ""},
+			},
+			errExpected: true,
+		},
+		// LocalModeInterfaceNamePrefix, nodeInfo and ipt are not needed for these cases
+		{
+			mode: proxyconfigapi.LocalModeInterfaceNamePrefix,
+			config: &proxyconfigapi.KubeProxyConfiguration{
+				DetectLocal: proxyconfigapi.DetectLocalConfiguration{InterfaceNamePrefix: "veth"},
+			},
+			expected: resolveDualStackLocalDetectors(t)(
+				proxyutiliptables.NewDetectLocalByInterfaceNamePrefix("veth"))(
+				proxyutiliptables.NewDetectLocalByInterfaceNamePrefix("veth")),
+			errExpected: false,
+		},
+		{
+			mode: proxyconfigapi.LocalModeInterfaceNamePrefix,
+			config: &proxyconfigapi.KubeProxyConfiguration{
+				DetectLocal: proxyconfigapi.DetectLocalConfiguration{InterfaceNamePrefix: ""},
+			},
+			errExpected: true,
 		},
 	}
 	for i, c := range cases {

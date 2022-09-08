@@ -21,7 +21,7 @@ import (
 	"crypto/tls"
 	"crypto/x509"
 	"fmt"
-	"io/ioutil"
+	"io"
 	"net"
 	"net/http"
 	"net/http/httptest"
@@ -347,7 +347,7 @@ func TestProxyHandler(t *testing.T) {
 				t.Errorf("%s: expected %v, got %v", name, e, a)
 				return
 			}
-			bytes, err := ioutil.ReadAll(resp.Body)
+			bytes, err := io.ReadAll(resp.Body)
 			if err != nil {
 				t.Errorf("%s: %v", name, err)
 				return
@@ -756,7 +756,7 @@ func TestGetContextForNewRequest(t *testing.T) {
 	if resp.StatusCode != http.StatusServiceUnavailable {
 		t.Error(err)
 	}
-	body, err := ioutil.ReadAll(resp.Body)
+	body, err := io.ReadAll(resp.Body)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -847,7 +847,8 @@ func TestProxyCertReload(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Unable to create dynamic certificates: %v", err)
 	}
-	err = certProvider.RunOnce()
+	ctx := context.TODO()
+	err = certProvider.RunOnce(ctx)
 	if err != nil {
 		t.Fatalf("Unable to load dynamic certificates: %v", err)
 	}
@@ -886,7 +887,7 @@ func TestProxyCertReload(t *testing.T) {
 	// STEP 3: swap the certificate used by the aggregator to auth against the backend server and verify the request passes
 	//         note that this step uses the certificate that can be validated by the backend server with clientCaCrt()
 	writeCerts(certFile, keyFile, clientCert(), clientKey(), t)
-	err = certProvider.RunOnce()
+	err = certProvider.RunOnce(ctx)
 	if err != nil {
 		t.Fatalf("Expected no error when refreshing dynamic certs, got %v", err)
 	}
@@ -1037,7 +1038,7 @@ func TestFlowControlSignal(t *testing.T) {
 }
 
 func getCertAndKeyPaths(t *testing.T) (string, string, string) {
-	dir, err := ioutil.TempDir(os.TempDir(), "k8s-test-handler-proxy-cert")
+	dir, err := os.MkdirTemp(os.TempDir(), "k8s-test-handler-proxy-cert")
 	if err != nil {
 		t.Fatalf("Unable to create the test directory %q: %v", dir, err)
 	}
@@ -1047,10 +1048,10 @@ func getCertAndKeyPaths(t *testing.T) (string, string, string) {
 }
 
 func writeCerts(certFile, keyFile string, certContent, keyContent []byte, t *testing.T) {
-	if err := ioutil.WriteFile(certFile, certContent, 0600); err != nil {
+	if err := os.WriteFile(certFile, certContent, 0600); err != nil {
 		t.Fatalf("Unable to create the file %q: %v", certFile, err)
 	}
-	if err := ioutil.WriteFile(keyFile, keyContent, 0600); err != nil {
+	if err := os.WriteFile(keyFile, keyContent, 0600); err != nil {
 		t.Fatalf("Unable to create the file %q: %v", keyFile, err)
 	}
 }
@@ -1077,7 +1078,7 @@ func getSingleCounterValueFromRegistry(t *testing.T, r metrics.Gatherer, name st
 }
 
 func readTestFile(filename string) []byte {
-	data, err := ioutil.ReadFile("testdata/" + filename)
+	data, err := os.ReadFile("testdata/" + filename)
 	if err != nil {
 		panic(err)
 	}

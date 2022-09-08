@@ -20,7 +20,7 @@ import (
 	"context"
 	"path/filepath"
 
-	"github.com/onsi/ginkgo"
+	"github.com/onsi/ginkgo/v2"
 	"github.com/onsi/gomega"
 	"github.com/vmware/govmomi/object"
 	"github.com/vmware/govmomi/vim25/types"
@@ -34,6 +34,7 @@ import (
 	e2epv "k8s.io/kubernetes/test/e2e/framework/pv"
 	e2eskipper "k8s.io/kubernetes/test/e2e/framework/skipper"
 	"k8s.io/kubernetes/test/e2e/storage/utils"
+	admissionapi "k8s.io/pod-security-admission/api"
 )
 
 /*
@@ -56,6 +57,7 @@ import (
 
 var _ = utils.SIGDescribe("Volume Disk Format [Feature:vsphere]", func() {
 	f := framework.NewDefaultFramework("volume-disk-format")
+	f.NamespacePodSecurityEnforceLevel = admissionapi.LevelPrivileged
 	const (
 		NodeLabelKey = "vsphere_e2e_label_volume_diskformat"
 	)
@@ -150,7 +152,9 @@ func invokeTest(f *framework.Framework, client clientset.Interface, namespace st
 	gomega.Expect(e2epod.WaitForPodNameRunningInNamespace(client, pod.Name, namespace)).To(gomega.Succeed())
 
 	isAttached, err := diskIsAttached(pv.Spec.VsphereVolume.VolumePath, nodeName)
-	framework.ExpectEqual(isAttached, true)
+	if !isAttached {
+		framework.Failf("Volume: %s is not attached to the node: %v", pv.Spec.VsphereVolume.VolumePath, nodeName)
+	}
 	framework.ExpectNoError(err)
 
 	ginkgo.By("Verify Disk Format")
@@ -196,7 +200,9 @@ func verifyDiskFormat(client clientset.Interface, nodeName string, pvVolumePath 
 		}
 	}
 
-	framework.ExpectEqual(diskFound, true, "Failed to find disk")
+	if !diskFound {
+		framework.Failf("Failed to find disk: %s", pvVolumePath)
+	}
 	isDiskFormatCorrect := false
 	if diskFormat == "eagerzeroedthick" {
 		if eagerlyScrub == true && thinProvisioned == false {

@@ -99,6 +99,10 @@ func (plugin *fcPlugin) SupportsBulkVolumeVerification() bool {
 	return false
 }
 
+func (plugin *fcPlugin) SupportsSELinuxContextMount(spec *volume.Spec) (bool, error) {
+	return false, nil
+}
+
 func (plugin *fcPlugin) GetAccessModes() []v1.PersistentVolumeAccessMode {
 	return []v1.PersistentVolumeAccessMode{
 		v1.ReadWriteOnce,
@@ -286,9 +290,11 @@ func (plugin *fcPlugin) ConstructVolumeSpec(volumeName, mountPath string) (*volu
 //   - Searches a file whose name is {pod uuid} under volume plugin directory.
 //   - If a file is found, then retreives volumePluginDependentPath from globalMapPathUUID.
 //   - Once volumePluginDependentPath is obtained, store volume information to VolumeSource
+//
 // examples:
-//   mapPath: pods/{podUid}/{DefaultKubeletVolumeDevicesDirName}/{escapeQualifiedPluginName}/{volumeName}
-//   globalMapPathUUID : plugins/kubernetes.io/{PluginName}/{DefaultKubeletVolumeDevicesDirName}/{volumePluginDependentPath}/{pod uuid}
+//
+//	mapPath: pods/{podUid}/{DefaultKubeletVolumeDevicesDirName}/{escapeQualifiedPluginName}/{volumeName}
+//	globalMapPathUUID : plugins/kubernetes.io/{PluginName}/{DefaultKubeletVolumeDevicesDirName}/{volumePluginDependentPath}/{pod uuid}
 func (plugin *fcPlugin) ConstructBlockVolumeSpec(podUID types.UID, volumeName, mapPath string) (*volume.Spec, error) {
 	pluginDir := plugin.host.GetVolumeDevicePluginDir(fcPluginName)
 	blkutil := volumepathhandler.NewBlockVolumePathHandler()
@@ -364,17 +370,10 @@ var _ volume.Mounter = &fcDiskMounter{}
 
 func (b *fcDiskMounter) GetAttributes() volume.Attributes {
 	return volume.Attributes{
-		ReadOnly:        b.readOnly,
-		Managed:         !b.readOnly,
-		SupportsSELinux: true,
+		ReadOnly:       b.readOnly,
+		Managed:        !b.readOnly,
+		SELinuxRelabel: true,
 	}
-}
-
-// Checks prior to mount operations to verify that the required components (binaries, etc.)
-// to mount the volume are available on the underlying node.
-// If not, it returns an error
-func (b *fcDiskMounter) CanMount() error {
-	return nil
 }
 
 func (b *fcDiskMounter) SetUp(mounterArgs volume.MounterArgs) error {

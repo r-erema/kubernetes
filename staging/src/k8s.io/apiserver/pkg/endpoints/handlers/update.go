@@ -35,12 +35,11 @@ import (
 	"k8s.io/apiserver/pkg/authorization/authorizer"
 	"k8s.io/apiserver/pkg/endpoints/handlers/fieldmanager"
 	"k8s.io/apiserver/pkg/endpoints/handlers/finisher"
+	requestmetrics "k8s.io/apiserver/pkg/endpoints/handlers/metrics"
 	"k8s.io/apiserver/pkg/endpoints/handlers/negotiation"
 	"k8s.io/apiserver/pkg/endpoints/request"
-	"k8s.io/apiserver/pkg/features"
 	"k8s.io/apiserver/pkg/registry/rest"
 	"k8s.io/apiserver/pkg/util/dryrun"
-	utilfeature "k8s.io/apiserver/pkg/util/feature"
 	"k8s.io/klog/v2"
 	utiltrace "k8s.io/utils/trace"
 )
@@ -51,11 +50,6 @@ func UpdateResource(r rest.Updater, scope *RequestScope, admit admission.Interfa
 		// For performance tracking purposes.
 		trace := utiltrace.New("Update", traceFields(req)...)
 		defer trace.LogIfLong(500 * time.Millisecond)
-
-		if isDryRun(req.URL) && !utilfeature.DefaultFeatureGate.Enabled(features.DryRun) {
-			scope.err(errors.NewBadRequest("the dryRun feature is disabled"), w, req)
-			return
-		}
 
 		namespace, name, err := scope.Namer.Name(req)
 		if err != nil {
@@ -76,7 +70,8 @@ func UpdateResource(r rest.Updater, scope *RequestScope, admit admission.Interfa
 			return
 		}
 
-		body, err := limitedReadBody(req, scope.MaxRequestBodyBytes)
+		body, err := limitedReadBodyWithRecordMetric(ctx, req, scope.MaxRequestBodyBytes, scope.Resource.GroupResource().String(), requestmetrics.Update)
+		trace.Step("limitedReadBody done", utiltrace.Field{"len", len(body)}, utiltrace.Field{"err", err})
 		if err != nil {
 			scope.err(err, w, req)
 			return
@@ -135,9 +130,17 @@ func UpdateResource(r rest.Updater, scope *RequestScope, admit admission.Interfa
 		}
 		trace.Step("Conversion done")
 
-		ae := audit.AuditEventFrom(ctx)
 		audit.LogRequestObject(req.Context(), obj, objGV, scope.Resource, scope.Subresource, scope.Serializer)
-		admit = admission.WithAudit(admit, ae)
+		admit = admission.WithAudit(admit)
+
+		// if this object supports namespace info
+		if objectMeta, err := meta.Accessor(obj); err == nil {
+			// ensure namespace on the object is correct, or error if a conflicting namespace was set in the object
+			if err := rest.EnsureObjectNamespaceMatchesRequestNamespace(rest.ExpectedNamespaceForResource(namespace, scope.Resource), objectMeta); err != nil {
+				scope.err(err, w, req)
+				return
+			}
+		}
 
 		if err := checkName(obj, name, namespace, scope.Namer); err != nil {
 			scope.err(err, w, req)
@@ -180,6 +183,15 @@ func UpdateResource(r rest.Updater, scope *RequestScope, admit admission.Interfa
 				dedupOwnerReferencesAndAddWarning(newObj, req.Context(), true)
 				return newObj, nil
 			})
+		}
+
+		// Ignore changes that only affect managed fields
+		// timestamps. FieldManager can't know about changes
+		// like normalized fields, defaulted fields and other
+		// mutations.
+		// Only makes sense when SSA field manager is being used
+		if scope.FieldManager != nil {
+			transformers = append(transformers, fieldmanager.IgnoreManagedFieldsTimestampsTransformer)
 		}
 
 		createAuthorizerAttributes := authorizer.AttributesRecord{
@@ -230,11 +242,11 @@ func UpdateResource(r rest.Updater, scope *RequestScope, admit admission.Interfa
 			}
 			return result, err
 		})
+		trace.Step("Write to database call finished", utiltrace.Field{"len", len(body)}, utiltrace.Field{"err", err})
 		if err != nil {
 			scope.err(err, w, req)
 			return
 		}
-		trace.Step("Object stored in database")
 
 		status := http.StatusOK
 		if wasCreated {

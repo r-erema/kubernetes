@@ -103,6 +103,10 @@ func (plugin *emptyDirPlugin) SupportsBulkVolumeVerification() bool {
 	return false
 }
 
+func (plugin *emptyDirPlugin) SupportsSELinuxContextMount(spec *volume.Spec) (bool, error) {
+	return false, nil
+}
+
 func (plugin *emptyDirPlugin) NewMounter(spec *volume.Spec, pod *v1.Pod, opts volume.VolumeOptions) (volume.Mounter, error) {
 	return plugin.newMounterInternal(spec, pod, plugin.host.GetMounter(plugin.GetPluginName()), &realMountDetector{plugin.host.GetMounter(plugin.GetPluginName())}, opts)
 }
@@ -219,17 +223,10 @@ type emptyDir struct {
 
 func (ed *emptyDir) GetAttributes() volume.Attributes {
 	return volume.Attributes{
-		ReadOnly:        false,
-		Managed:         true,
-		SupportsSELinux: true,
+		ReadOnly:       false,
+		Managed:        true,
+		SELinuxRelabel: true,
 	}
-}
-
-// Checks prior to mount operations to verify that the required components (binaries, etc.)
-// to mount the volume are available on the underlying node.
-// If not, it returns an error
-func (ed *emptyDir) CanMount() error {
-	return nil
 }
 
 // SetUp creates new directory.
@@ -527,11 +524,7 @@ func (ed *emptyDir) teardownDefault(dir string) error {
 	}
 	// Renaming the directory is not required anymore because the operation executor
 	// now handles duplicate operations on the same volume
-	err = os.RemoveAll(dir)
-	if err != nil {
-		return err
-	}
-	return nil
+	return os.RemoveAll(dir)
 }
 
 func (ed *emptyDir) teardownTmpfsOrHugetlbfs(dir string) error {

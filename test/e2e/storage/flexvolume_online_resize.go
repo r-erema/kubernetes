@@ -21,7 +21,7 @@ import (
 	"fmt"
 	"path"
 
-	"github.com/onsi/ginkgo"
+	"github.com/onsi/ginkgo/v2"
 	"github.com/onsi/gomega"
 	v1 "k8s.io/api/core/v1"
 	storagev1 "k8s.io/api/storage/v1"
@@ -36,9 +36,11 @@ import (
 	e2eskipper "k8s.io/kubernetes/test/e2e/framework/skipper"
 	"k8s.io/kubernetes/test/e2e/storage/testsuites"
 	"k8s.io/kubernetes/test/e2e/storage/utils"
+	imageutils "k8s.io/kubernetes/test/utils/image"
+	admissionapi "k8s.io/pod-security-admission/api"
 )
 
-var _ = utils.SIGDescribe("Mounted flexvolume volume expand [Slow] [Feature:ExpandInUsePersistentVolumes]", func() {
+var _ = utils.SIGDescribe("[Feature:Flexvolumes] Mounted flexvolume volume expand [Slow]", func() {
 	var (
 		c                 clientset.Interface
 		ns                string
@@ -50,10 +52,11 @@ var _ = utils.SIGDescribe("Mounted flexvolume volume expand [Slow] [Feature:Expa
 		nodeKeyValueLabel map[string]string
 		nodeLabelValue    string
 		nodeKey           string
-		nodeList          *v1.NodeList
+		node              *v1.Node
 	)
 
 	f := framework.NewDefaultFramework("mounted-flexvolume-expand")
+	f.NamespacePodSecurityEnforceLevel = admissionapi.LevelPrivileged
 	ginkgo.BeforeEach(func() {
 		e2eskipper.SkipUnlessProviderIs("aws", "gce", "local")
 		e2eskipper.SkipUnlessMasterOSDistroIs("debian", "ubuntu", "gci", "custom")
@@ -62,8 +65,9 @@ var _ = utils.SIGDescribe("Mounted flexvolume volume expand [Slow] [Feature:Expa
 		c = f.ClientSet
 		ns = f.Namespace.Name
 		framework.ExpectNoError(framework.WaitForAllNodesSchedulable(c, framework.TestContext.NodeSchedulableTimeout))
+		var err error
 
-		node, err := e2enode.GetRandomReadySchedulableNode(f.ClientSet)
+		node, err = e2enode.GetRandomReadySchedulableNode(f.ClientSet)
 		framework.ExpectNoError(err)
 		nodeName = node.Name
 
@@ -90,7 +94,9 @@ var _ = utils.SIGDescribe("Mounted flexvolume volume expand [Slow] [Feature:Expa
 			fmt.Printf("storage class creation error: %v\n", err)
 		}
 		framework.ExpectNoError(err, "Error creating resizable storage class: %v", err)
-		framework.ExpectEqual(*resizableSc.AllowVolumeExpansion, true)
+		if !*resizableSc.AllowVolumeExpansion {
+			framework.Failf("Class %s does not allow volume expansion", resizableSc.Name)
+		}
 
 		pvc = e2epv.MakePersistentVolumeClaim(e2epv.PersistentVolumeClaimConfig{
 			StorageClassName: &(resizableSc.Name),
@@ -124,9 +130,8 @@ var _ = utils.SIGDescribe("Mounted flexvolume volume expand [Slow] [Feature:Expa
 
 		driver := "dummy-attachable"
 
-		node := nodeList.Items[0]
 		ginkgo.By(fmt.Sprintf("installing flexvolume %s on node %s as %s", path.Join(driverDir, driver), node.Name, driver))
-		installFlex(c, &node, "k8s", driver, path.Join(driverDir, driver))
+		installFlex(c, node, "k8s", driver, path.Join(driverDir, driver))
 		ginkgo.By(fmt.Sprintf("installing flexvolume %s on (master) node %s as %s", path.Join(driverDir, driver), node.Name, driver))
 		installFlex(c, nil, "k8s", driver, path.Join(driverDir, driver))
 
@@ -221,7 +226,7 @@ func makeNginxPod(ns string, nodeSelector map[string]string, pvclaims []*v1.Pers
 			Containers: []v1.Container{
 				{
 					Name:  "write-pod",
-					Image: "nginx",
+					Image: imageutils.GetE2EImage(imageutils.Nginx),
 					Ports: []v1.ContainerPort{
 						{
 							Name:          "http-server",

@@ -31,7 +31,6 @@ import (
 	"google.golang.org/grpc/status"
 	v1 "k8s.io/api/core/v1"
 	storagev1 "k8s.io/api/storage/v1"
-	storagev1beta1 "k8s.io/api/storage/v1beta1"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	"k8s.io/apimachinery/pkg/api/resource"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
@@ -57,9 +56,10 @@ import (
 	"k8s.io/kubernetes/test/e2e/storage/testsuites"
 	"k8s.io/kubernetes/test/e2e/storage/utils"
 	imageutils "k8s.io/kubernetes/test/utils/image"
+	admissionapi "k8s.io/pod-security-admission/api"
 	utilptr "k8s.io/utils/pointer"
 
-	"github.com/onsi/ginkgo"
+	"github.com/onsi/ginkgo/v2"
 	"github.com/onsi/gomega"
 )
 
@@ -130,6 +130,7 @@ var _ = utils.SIGDescribe("CSI mock volume", func() {
 	var m mockDriverSetup
 
 	f := framework.NewDefaultFramework("csi-mock-volumes")
+	f.NamespacePodSecurityEnforceLevel = admissionapi.LevelPrivileged
 
 	init := func(tp testParameters) {
 		m = mockDriverSetup{
@@ -361,7 +362,7 @@ var _ = utils.SIGDescribe("CSI mock volume", func() {
 				init(testParameters{registerDriver: test.deployClusterRegistrar, disableAttach: test.disableAttach})
 				defer cleanup()
 
-				volumeType := t.volumeType
+				volumeType := test.volumeType
 				if volumeType == "" {
 					volumeType = pvcReference
 				}
@@ -683,7 +684,9 @@ var _ = utils.SIGDescribe("CSI mock volume", func() {
 				sc, pvc, pod := createPod(pvcReference)
 				gomega.Expect(pod).NotTo(gomega.BeNil(), "while creating pod for resizing")
 
-				framework.ExpectEqual(*sc.AllowVolumeExpansion, true, "failed creating sc with allowed expansion")
+				if !*sc.AllowVolumeExpansion {
+					framework.Fail("failed creating sc with allowed expansion")
+				}
 
 				err = e2epod.WaitForPodNameRunningInNamespace(m.cs, pod.Name, pod.Namespace)
 				framework.ExpectNoError(err, "Failed to start pod1: %v", err)
@@ -776,7 +779,9 @@ var _ = utils.SIGDescribe("CSI mock volume", func() {
 				sc, pvc, pod := createPod(pvcReference)
 				gomega.Expect(pod).NotTo(gomega.BeNil(), "while creating pod for resizing")
 
-				framework.ExpectEqual(*sc.AllowVolumeExpansion, true, "failed creating sc with allowed expansion")
+				if !*sc.AllowVolumeExpansion {
+					framework.Fail("failed creating sc with allowed expansion")
+				}
 
 				err = e2epod.WaitForPodNameRunningInNamespace(m.cs, pod.Name, pod.Namespace)
 				framework.ExpectNoError(err, "Failed to start pod1: %v", err)
@@ -1387,7 +1392,7 @@ var _ = utils.SIGDescribe("CSI mock volume", func() {
 				// before adding CSIStorageCapacity objects for it.
 				for _, capacityStr := range test.capacities {
 					capacityQuantity := resource.MustParse(capacityStr)
-					capacity := &storagev1beta1.CSIStorageCapacity{
+					capacity := &storagev1.CSIStorageCapacity{
 						ObjectMeta: metav1.ObjectMeta{
 							GenerateName: "fake-capacity-",
 						},
@@ -1396,10 +1401,10 @@ var _ = utils.SIGDescribe("CSI mock volume", func() {
 						NodeTopology:     &metav1.LabelSelector{},
 						Capacity:         &capacityQuantity,
 					}
-					createdCapacity, err := f.ClientSet.StorageV1beta1().CSIStorageCapacities(f.Namespace.Name).Create(context.Background(), capacity, metav1.CreateOptions{})
+					createdCapacity, err := f.ClientSet.StorageV1().CSIStorageCapacities(f.Namespace.Name).Create(context.Background(), capacity, metav1.CreateOptions{})
 					framework.ExpectNoError(err, "create CSIStorageCapacity %+v", *capacity)
 					m.testCleanups = append(m.testCleanups, func() {
-						f.ClientSet.StorageV1beta1().CSIStorageCapacities(f.Namespace.Name).Delete(context.Background(), createdCapacity.Name, metav1.DeleteOptions{})
+						f.ClientSet.StorageV1().CSIStorageCapacities(f.Namespace.Name).Delete(context.Background(), createdCapacity.Name, metav1.DeleteOptions{})
 					})
 				}
 
@@ -1527,7 +1532,7 @@ var _ = utils.SIGDescribe("CSI mock volume", func() {
 				}
 
 				ginkgo.By(fmt.Sprintf("Get VolumeSnapshotContent bound to VolumeSnapshot %s", snapshot.GetName()))
-				snapshotContent := utils.GetSnapshotContentFromSnapshot(m.config.Framework.DynamicClient, snapshot)
+				snapshotContent := utils.GetSnapshotContentFromSnapshot(m.config.Framework.DynamicClient, snapshot, f.Timeouts.SnapshotCreate)
 				volumeSnapshotContentName := snapshotContent.GetName()
 
 				ginkgo.By(fmt.Sprintf("Verify VolumeSnapshotContent %s contains finalizer %s", snapshot.GetName(), volumeSnapshotContentFinalizer))
@@ -1730,8 +1735,8 @@ var _ = utils.SIGDescribe("CSI mock volume", func() {
 			},
 		}
 		for _, t := range tests {
-			test := t
-			ginkgo.It(test.name, func() {
+			t := t
+			ginkgo.It(t.name, func() {
 				var nodeStageFsGroup, nodePublishFsGroup string
 				if framework.NodeOSDistroIs("windows") {
 					e2eskipper.Skipf("FSGroupPolicy is only applied on linux nodes -- skipping")
@@ -1797,6 +1802,7 @@ var _ = utils.SIGDescribe("CSI mock volume", func() {
 			},
 		}
 		for _, test := range tests {
+			test := test
 			ginkgo.It(test.name, func() {
 				hooks := createPreHook("CreateSnapshot", test.createSnapshotHook)
 				init(testParameters{
@@ -1858,7 +1864,7 @@ var _ = utils.SIGDescribe("CSI mock volume", func() {
 
 				_, snapshot := storageframework.CreateSnapshot(sDriver, m.config, storageframework.DynamicSnapshotDelete, pvc.Name, pvc.Namespace, f.Timeouts, parameters)
 				framework.ExpectNoError(err, "failed to create snapshot")
-				snapshotcontent := utils.GetSnapshotContentFromSnapshot(m.config.Framework.DynamicClient, snapshot)
+				snapshotcontent := utils.GetSnapshotContentFromSnapshot(m.config.Framework.DynamicClient, snapshot, f.Timeouts.SnapshotCreate)
 				if annotations, ok = snapshotcontent.Object["metadata"].(map[string]interface{})["annotations"]; !ok {
 					framework.Failf("Unable to get volume snapshot content annotations")
 				}
@@ -1887,6 +1893,7 @@ var _ = utils.SIGDescribe("CSI mock volume", func() {
 			},
 		}
 		for _, test := range tests {
+			test := test
 			ginkgo.It(test.name, func() {
 				init(testParameters{
 					disableAttach:  true,
@@ -2476,14 +2483,14 @@ func createPreHook(method string, callback func(counter int64) error) *drivers.H
 func createFSGroupRequestPreHook(nodeStageFsGroup, nodePublishFsGroup *string) *drivers.Hooks {
 	return &drivers.Hooks{
 		Pre: func(ctx context.Context, fullMethod string, request interface{}) (reply interface{}, err error) {
-			nodeStageRequest, ok := request.(csipbv1.NodeStageVolumeRequest)
+			nodeStageRequest, ok := request.(*csipbv1.NodeStageVolumeRequest)
 			if ok {
 				mountVolume := nodeStageRequest.GetVolumeCapability().GetMount()
 				if mountVolume != nil {
 					*nodeStageFsGroup = mountVolume.VolumeMountGroup
 				}
 			}
-			nodePublishRequest, ok := request.(csipbv1.NodePublishVolumeRequest)
+			nodePublishRequest, ok := request.(*csipbv1.NodePublishVolumeRequest)
 			if ok {
 				mountVolume := nodePublishRequest.GetVolumeCapability().GetMount()
 				if mountVolume != nil {

@@ -34,7 +34,7 @@ import (
 	"k8s.io/apimachinery/pkg/util/wait"
 	"k8s.io/client-go/dynamic"
 	"k8s.io/client-go/kubernetes"
-	"k8s.io/kube-scheduler/config/v1beta3"
+	configv1 "k8s.io/kube-scheduler/config/v1"
 	apiservertesting "k8s.io/kubernetes/cmd/kube-apiserver/app/testing"
 	"k8s.io/kubernetes/pkg/scheduler"
 	configtesting "k8s.io/kubernetes/pkg/scheduler/apis/config/testing"
@@ -56,6 +56,7 @@ func TestCoreResourceEnqueue(t *testing.T) {
 	testCtx := testutils.InitTestSchedulerWithOptions(
 		t,
 		testutils.InitTestAPIServer(t, "core-res-enqueue", nil),
+		0,
 		scheduler.WithPodInitialBackoffSeconds(0),
 		scheduler.WithPodMaxBackoffSeconds(0),
 	)
@@ -87,7 +88,8 @@ func TestCoreResourceEnqueue(t *testing.T) {
 
 	// Wait for the three pods to be present in the scheduling queue.
 	if err := wait.Poll(time.Millisecond*200, wait.ForeverTestTimeout, func() (bool, error) {
-		return len(testCtx.Scheduler.SchedulingQueue.PendingPods()) == 3, nil
+		pendingPods, _ := testCtx.Scheduler.SchedulingQueue.PendingPods()
+		return len(pendingPods) == 3, nil
 	}); err != nil {
 		t.Fatal(err)
 	}
@@ -100,19 +102,15 @@ func TestCoreResourceEnqueue(t *testing.T) {
 			t.Fatalf("Cannot find the profile for Pod %v", podInfo.Pod.Name)
 		}
 		// Schedule the Pod manually.
-		_, fitError := testCtx.Scheduler.Algorithm.Schedule(ctx, nil, fwk, framework.NewCycleState(), podInfo.Pod)
+		_, fitError := testCtx.Scheduler.SchedulePod(ctx, fwk, framework.NewCycleState(), podInfo.Pod)
 		if fitError == nil {
 			t.Fatalf("Expect Pod %v to fail at scheduling.", podInfo.Pod.Name)
 		}
-		testCtx.Scheduler.Error(podInfo, fitError)
-
-		// Scheduling cycle is incremented by one after NextPod() is called, so
-		// pass a number larger than i to move Pod to unschedulableQ.
-		testCtx.Scheduler.SchedulingQueue.AddUnschedulableIfNotPresent(podInfo, int64(i+10))
+		testCtx.Scheduler.FailureHandler(ctx, fwk, podInfo, fitError, v1.PodReasonUnschedulable, nil)
 	}
 
 	// Trigger a NodeTaintChange event.
-	// We expect this event to trigger moving the test Pod from unschedulableQ to activeQ.
+	// We expect this event to trigger moving the test Pod from unschedulablePods to activeQ.
 	node.Spec.Taints = nil
 	if _, err := cs.CoreV1().Nodes().Update(ctx, node, metav1.UpdateOptions{}); err != nil {
 		t.Fatalf("Failed to remove taints off the node: %v", err)
@@ -214,12 +212,12 @@ func TestCustomResourceEnqueue(t *testing.T) {
 			return &fakeCRPlugin{}, nil
 		},
 	}
-	cfg := configtesting.V1beta3ToInternalWithDefaults(t, v1beta3.KubeSchedulerConfiguration{
-		Profiles: []v1beta3.KubeSchedulerProfile{{
+	cfg := configtesting.V1ToInternalWithDefaults(t, configv1.KubeSchedulerConfiguration{
+		Profiles: []configv1.KubeSchedulerProfile{{
 			SchedulerName: pointer.StringPtr(v1.DefaultSchedulerName),
-			Plugins: &v1beta3.Plugins{
-				Filter: v1beta3.PluginSet{
-					Enabled: []v1beta3.Plugin{
+			Plugins: &configv1.Plugins{
+				Filter: configv1.PluginSet{
+					Enabled: []configv1.Plugin{
 						{Name: "fakeCRPlugin"},
 					},
 				},
@@ -240,6 +238,7 @@ func TestCustomResourceEnqueue(t *testing.T) {
 	testCtx = testutils.InitTestSchedulerWithOptions(
 		t,
 		testCtx,
+		0,
 		scheduler.WithProfiles(cfg.Profiles...),
 		scheduler.WithFrameworkOutOfTreeRegistry(registry),
 		scheduler.WithPodInitialBackoffSeconds(0),
@@ -265,7 +264,8 @@ func TestCustomResourceEnqueue(t *testing.T) {
 
 	// Wait for the testing Pod to be present in the scheduling queue.
 	if err := wait.Poll(time.Millisecond*200, wait.ForeverTestTimeout, func() (bool, error) {
-		return len(testCtx.Scheduler.SchedulingQueue.PendingPods()) == 1, nil
+		pendingPods, _ := testCtx.Scheduler.SchedulingQueue.PendingPods()
+		return len(pendingPods) == 1, nil
 	}); err != nil {
 		t.Fatal(err)
 	}
@@ -277,19 +277,19 @@ func TestCustomResourceEnqueue(t *testing.T) {
 		t.Fatalf("Cannot find the profile for Pod %v", podInfo.Pod.Name)
 	}
 	// Schedule the Pod manually.
-	_, fitError := testCtx.Scheduler.Algorithm.Schedule(ctx, nil, fwk, framework.NewCycleState(), podInfo.Pod)
+	_, fitError := testCtx.Scheduler.SchedulePod(ctx, fwk, framework.NewCycleState(), podInfo.Pod)
 	// The fitError is expected to be non-nil as it failed the fakeCRPlugin plugin.
 	if fitError == nil {
 		t.Fatalf("Expect Pod %v to fail at scheduling.", podInfo.Pod.Name)
 	}
-	testCtx.Scheduler.Error(podInfo, fitError)
+	testCtx.Scheduler.FailureHandler(ctx, fwk, podInfo, fitError, v1.PodReasonUnschedulable, nil)
 
 	// Scheduling cycle is incremented from 0 to 1 after NextPod() is called, so
-	// pass a number larger than 1 to move Pod to unschedulableQ.
+	// pass a number larger than 1 to move Pod to unschedulablePods.
 	testCtx.Scheduler.SchedulingQueue.AddUnschedulableIfNotPresent(podInfo, 10)
 
 	// Trigger a Custom Resource event.
-	// We expect this event to trigger moving the test Pod from unschedulableQ to activeQ.
+	// We expect this event to trigger moving the test Pod from unschedulablePods to activeQ.
 	crdGVR := schema.GroupVersionResource{Group: fooCRD.Spec.Group, Version: fooCRD.Spec.Versions[0].Name, Resource: "foos"}
 	crClient := dynamicClient.Resource(crdGVR).Namespace(ns)
 	if _, err := crClient.Create(ctx, &unstructured.Unstructured{

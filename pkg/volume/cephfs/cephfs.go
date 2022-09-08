@@ -85,6 +85,10 @@ func (plugin *cephfsPlugin) SupportsBulkVolumeVerification() bool {
 	return false
 }
 
+func (plugin *cephfsPlugin) SupportsSELinuxContextMount(spec *volume.Spec) (bool, error) {
+	return false, nil
+}
+
 func (plugin *cephfsPlugin) GetAccessModes() []v1.PersistentVolumeAccessMode {
 	return []v1.PersistentVolumeAccessMode{
 		v1.ReadWriteOnce,
@@ -206,17 +210,10 @@ var _ volume.Mounter = &cephfsMounter{}
 
 func (cephfsVolume *cephfsMounter) GetAttributes() volume.Attributes {
 	return volume.Attributes{
-		ReadOnly:        cephfsVolume.readonly,
-		Managed:         false,
-		SupportsSELinux: false,
+		ReadOnly:       cephfsVolume.readonly,
+		Managed:        false,
+		SELinuxRelabel: false,
 	}
-}
-
-// Checks prior to mount operations to verify that the required components (binaries, etc.)
-// to mount the volume are available on the underlying node.
-// If not, it returns an error
-func (cephfsVolume *cephfsMounter) CanMount() error {
-	return nil
 }
 
 // SetUp attaches the disk and bind mounts to the volume path.
@@ -347,7 +344,9 @@ func (cephfsVolume *cephfs) execFuseMount(mountpoint string) error {
 		klog.V(4).Info("cephfs mount begin using fuse.")
 
 		keyringPath := cephfsVolume.GetKeyringPath()
-		os.MkdirAll(keyringPath, 0750)
+		if err := os.MkdirAll(keyringPath, 0750); err != nil {
+			return err
+		}
 
 		payload := make(map[string]util.FileProjection, 1)
 		var fileProjection util.FileProjection

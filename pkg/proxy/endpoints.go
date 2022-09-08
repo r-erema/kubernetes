@@ -150,7 +150,7 @@ func newBaseEndpointInfo(IP, nodeName, zone string, port int, isLocal bool,
 	}
 }
 
-type makeEndpointFunc func(info *BaseEndpointInfo) Endpoint
+type makeEndpointFunc func(info *BaseEndpointInfo, svcPortName *ServicePortName) Endpoint
 
 // This handler is invoked by the apply function on every change. This function should not modify the
 // EndpointsMap's but just use the changes for any Proxier specific cleanup.
@@ -202,8 +202,10 @@ func NewEndpointChangeTracker(hostname string, makeEndpointInfo makeEndpointFunc
 // if items changed, otherwise return false.  Update can be used to add/update/delete items of EndpointsChangeMap.  For example,
 // Add item
 //   - pass <nil, endpoints> as the <previous, current> pair.
+//
 // Update item
 //   - pass <oldEndpoints, endpoints> as the <previous, current> pair.
+//
 // Delete item
 //   - pass <endpoints, nil> as the <previous, current> pair.
 func (ect *EndpointChangeTracker) Update(previous, current *v1.Endpoints) bool {
@@ -462,7 +464,7 @@ func (ect *EndpointChangeTracker) endpointsToEndpointsMap(endpoints *v1.Endpoint
 				// Zone information is only supported with EndpointSlice API
 				baseEndpointInfo := newBaseEndpointInfo(addr.IP, nodeName, "", int(port.Port), isLocal, isReady, isServing, isTerminating, zoneHints)
 				if ect.makeEndpointInfo != nil {
-					endpointsMap[svcPortName] = append(endpointsMap[svcPortName], ect.makeEndpointInfo(baseEndpointInfo))
+					endpointsMap[svcPortName] = append(endpointsMap[svcPortName], ect.makeEndpointInfo(baseEndpointInfo, &svcPortName))
 				} else {
 					endpointsMap[svcPortName] = append(endpointsMap[svcPortName], baseEndpointInfo)
 				}

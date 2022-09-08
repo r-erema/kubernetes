@@ -27,6 +27,7 @@ import (
 
 	"k8s.io/klog/v2"
 
+	apiextensionsv1 "k8s.io/apiextensions-apiserver/pkg/apis/apiextensions/v1"
 	apiextensionsinformers "k8s.io/apiextensions-apiserver/pkg/client/informers/externalversions"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/runtime"
@@ -146,7 +147,7 @@ func createAggregatorServer(aggregatorConfig *aggregatorapiserver.Config, delega
 			// let the CRD controller process the initial set of CRDs before starting the autoregistration controller.
 			// this prevents the autoregistration controller's initial sync from deleting APIServices for CRDs that still exist.
 			// we only need to do this if CRDs are enabled on this server.  We can't use discovery because we are the source for discovery.
-			if aggregatorConfig.GenericConfig.MergedResourceConfig.AnyVersionForGroupEnabled("apiextensions.k8s.io") {
+			if aggregatorConfig.GenericConfig.MergedResourceConfig.ResourceEnabled(apiextensionsv1.SchemeGroupVersion.WithResource("customresourcedefinitions")) {
 				crdRegistrationController.WaitForInitialSync()
 			}
 			autoRegistrationController.Run(5, context.StopCh)
@@ -259,6 +260,7 @@ var apiVersionPriorities = map[schema.GroupVersion]priority{
 	{Group: "batch", Version: "v2alpha1"}:                        {group: 17400, version: 9},
 	{Group: "certificates.k8s.io", Version: "v1"}:                {group: 17300, version: 15},
 	{Group: "networking.k8s.io", Version: "v1"}:                  {group: 17200, version: 15},
+	{Group: "networking.k8s.io", Version: "v1alpha1"}:            {group: 17200, version: 1},
 	{Group: "policy", Version: "v1"}:                             {group: 17100, version: 15},
 	{Group: "policy", Version: "v1beta1"}:                        {group: 17100, version: 9},
 	{Group: "rbac.authorization.k8s.io", Version: "v1"}:          {group: 17000, version: 15},

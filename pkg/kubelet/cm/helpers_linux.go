@@ -25,7 +25,7 @@ import (
 
 	libcontainercgroups "github.com/opencontainers/runc/libcontainer/cgroups"
 
-	"k8s.io/api/core/v1"
+	v1 "k8s.io/api/core/v1"
 	"k8s.io/apimachinery/pkg/types"
 	utilfeature "k8s.io/apiserver/pkg/util/feature"
 	"k8s.io/kubernetes/pkg/api/v1/resource"
@@ -44,7 +44,7 @@ const (
 	SharesPerCPU  = 1024
 	MilliCPUToCPU = 1000
 
-	// 100000 is equivalent to 100ms
+	// 100000 is equivalent to 100usec
 	QuotaPeriod    = 100000
 	MinQuotaPeriod = 1000
 )
@@ -52,8 +52,8 @@ const (
 // MilliCPUToQuota converts milliCPU to CFS quota and period values.
 func MilliCPUToQuota(milliCPU int64, period int64) (quota int64) {
 	// CFS quota is measured in two values:
-	//  - cfs_period_us=100ms (the amount of time to measure usage across given by period)
-	//  - cfs_quota=20ms (the amount of cpu time allowed to be used across a period)
+	//  - cfs_period_us=100usec (the amount of time to measure usage across given by period)
+	//  - cfs_quota=20usec (the amount of cpu time allowed to be used across a period)
 	// so in the above example, you are limited to 20% of a single CPU
 	// for multi-cpu environments, you just scale equivalent amounts
 	// see https://www.kernel.org/doc/Documentation/scheduler/sched-bwc.txt for details
@@ -320,7 +320,7 @@ func NodeAllocatableRoot(cgroupRoot string, cgroupsPerQOS bool, cgroupDriver str
 	if cgroupsPerQOS {
 		nodeAllocatableRoot = NewCgroupName(nodeAllocatableRoot, defaultNodeAllocatableCgroupName)
 	}
-	if libcontainerCgroupManagerType(cgroupDriver) == libcontainerSystemd {
+	if cgroupDriver == "systemd" {
 		return nodeAllocatableRoot.ToSystemd()
 	}
 	return nodeAllocatableRoot.ToCgroupfs()
@@ -336,16 +336,4 @@ func GetKubeletContainer(kubeletCgroups string) (string, error) {
 		return cont, nil
 	}
 	return kubeletCgroups, nil
-}
-
-// GetRuntimeContainer returns the cgroup used by the container runtime
-func GetRuntimeContainer(containerRuntime, runtimeCgroups string) (string, error) {
-	if containerRuntime == "docker" {
-		cont, err := getContainerNameForProcess(dockerProcessName, dockerPidFile)
-		if err != nil {
-			return "", fmt.Errorf("failed to get container name for docker process: %v", err)
-		}
-		return cont, nil
-	}
-	return runtimeCgroups, nil
 }

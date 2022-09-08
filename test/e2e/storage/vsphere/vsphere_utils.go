@@ -24,7 +24,7 @@ import (
 	"strings"
 	"time"
 
-	"github.com/onsi/ginkgo"
+	"github.com/onsi/ginkgo/v2"
 	"github.com/onsi/gomega"
 	"github.com/vmware/govmomi/find"
 	"github.com/vmware/govmomi/object"
@@ -378,7 +378,9 @@ func verifyVSphereVolumesAccessible(c clientset.Interface, pod *v1.Pod, persiste
 		// Verify disks are attached to the node
 		isAttached, err := diskIsAttached(pv.Spec.VsphereVolume.VolumePath, nodeName)
 		framework.ExpectNoError(err)
-		framework.ExpectEqual(isAttached, true, fmt.Sprintf("disk %v is not attached with the node", pv.Spec.VsphereVolume.VolumePath))
+		if !isAttached {
+			framework.Failf("disk %v is not attached to the node: %v", pv.Spec.VsphereVolume.VolumePath, nodeName)
+		}
 		// Verify Volumes are accessible
 		filepath := filepath.Join("/mnt/", fmt.Sprintf("volume%v", index+1), "/emptyFile.txt")
 		_, err = framework.LookForStringInPodExec(namespace, pod.Name, []string{"/bin/touch", filepath}, "", time.Minute)
@@ -477,7 +479,7 @@ func getPathFromVMDiskPath(vmDiskPath string) string {
 	return datastorePathObj.Path
 }
 
-//getDatastorePathObjFromVMDiskPath gets the datastorePathObj from VM disk path.
+// getDatastorePathObjFromVMDiskPath gets the datastorePathObj from VM disk path.
 func getDatastorePathObjFromVMDiskPath(vmDiskPath string) (*object.DatastorePath, error) {
 	datastorePathObj := new(object.DatastorePath)
 	isSuccess := datastorePathObj.FromString(vmDiskPath)
@@ -513,7 +515,7 @@ func formatVirtualDiskUUID(uuid string) string {
 	return strings.ToLower(uuidWithNoHypens)
 }
 
-//isValidUUID checks if the string is a valid UUID.
+// isValidUUID checks if the string is a valid UUID.
 func isValidUUID(uuid string) bool {
 	r := regexp.MustCompile("^[a-fA-F0-9]{8}-[a-fA-F0-9]{4}-[a-fA-F0-9]{4}-[[a-fA-F0-9]{4}-[a-fA-F0-9]{12}$")
 	return r.MatchString(uuid)
@@ -788,7 +790,9 @@ func invokeVCenterServiceControl(command, service, host string) error {
 func expectVolumeToBeAttached(nodeName, volumePath string) {
 	isAttached, err := diskIsAttached(volumePath, nodeName)
 	framework.ExpectNoError(err)
-	framework.ExpectEqual(isAttached, true, fmt.Sprintf("disk: %s is not attached with the node", volumePath))
+	if !isAttached {
+		framework.Failf("Volume: %s is not attached to the node: %v", volumePath, nodeName)
+	}
 }
 
 // expectVolumesToBeAttached checks if the given Volumes are attached to the

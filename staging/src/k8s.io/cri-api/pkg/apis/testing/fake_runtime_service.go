@@ -180,7 +180,7 @@ func (r *FakeRuntimeService) Version(apiVersion string) (*runtimeapi.VersionResp
 }
 
 // Status returns runtime status of the FakeRuntimeService.
-func (r *FakeRuntimeService) Status() (*runtimeapi.RuntimeStatus, error) {
+func (r *FakeRuntimeService) Status(verbose bool) (*runtimeapi.StatusResponse, error) {
 	r.Lock()
 	defer r.Unlock()
 
@@ -189,7 +189,7 @@ func (r *FakeRuntimeService) Status() (*runtimeapi.RuntimeStatus, error) {
 		return nil, err
 	}
 
-	return r.FakeStatus, nil
+	return &runtimeapi.StatusResponse{Status: r.FakeStatus}, nil
 }
 
 // RunPodSandbox emulates the run of the pod sandbox in the FakeRuntimeService.
@@ -281,7 +281,7 @@ func (r *FakeRuntimeService) RemovePodSandbox(podSandboxID string) error {
 }
 
 // PodSandboxStatus returns pod sandbox status from the FakeRuntimeService.
-func (r *FakeRuntimeService) PodSandboxStatus(podSandboxID string) (*runtimeapi.PodSandboxStatus, error) {
+func (r *FakeRuntimeService) PodSandboxStatus(podSandboxID string, verbose bool) (*runtimeapi.PodSandboxStatusResponse, error) {
 	r.Lock()
 	defer r.Unlock()
 
@@ -296,7 +296,7 @@ func (r *FakeRuntimeService) PodSandboxStatus(podSandboxID string) (*runtimeapi.
 	}
 
 	status := s.PodSandboxStatus
-	return &status, nil
+	return &runtimeapi.PodSandboxStatusResponse{Status: &status}, nil
 }
 
 // ListPodSandbox returns the list of pod sandboxes in the FakeRuntimeService.
@@ -490,7 +490,7 @@ func (r *FakeRuntimeService) ListContainers(filter *runtimeapi.ContainerFilter) 
 }
 
 // ContainerStatus returns the container status given the container ID in FakeRuntimeService.
-func (r *FakeRuntimeService) ContainerStatus(containerID string) (*runtimeapi.ContainerStatus, error) {
+func (r *FakeRuntimeService) ContainerStatus(containerID string, verbose bool) (*runtimeapi.ContainerStatusResponse, error) {
 	r.Lock()
 	defer r.Unlock()
 
@@ -505,11 +505,11 @@ func (r *FakeRuntimeService) ContainerStatus(containerID string) (*runtimeapi.Co
 	}
 
 	status := c.ContainerStatus
-	return &status, nil
+	return &runtimeapi.ContainerStatusResponse{Status: &status}, nil
 }
 
 // UpdateContainerResources returns the container resource in the FakeRuntimeService.
-func (r *FakeRuntimeService) UpdateContainerResources(string, *runtimeapi.LinuxContainerResources) error {
+func (r *FakeRuntimeService) UpdateContainerResources(string, *runtimeapi.ContainerResources) error {
 	r.Lock()
 	defer r.Unlock()
 
@@ -692,5 +692,23 @@ func (r *FakeRuntimeService) ReopenContainerLog(containerID string) error {
 		return err
 	}
 
+	return nil
+}
+
+// CheckpointContainer emulates call to checkpoint a container in the FakeRuntimeService.
+func (r *FakeRuntimeService) CheckpointContainer(options *runtimeapi.CheckpointContainerRequest) error {
+	r.Lock()
+	defer r.Unlock()
+
+	r.Called = append(r.Called, "CheckpointContainer")
+
+	if err := r.popError("CheckpointContainer"); err != nil {
+		return err
+	}
+
+	return nil
+}
+
+func (f *FakeRuntimeService) GetContainerEvents(containerEventsCh chan *runtimeapi.ContainerEventResponse) error {
 	return nil
 }
